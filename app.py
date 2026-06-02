@@ -1,3 +1,4 @@
+import re
 import tempfile
 import sqlite3
 from io import StringIO
@@ -18,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("🏇 Golden Bullet")
-st.write("Upload screenshots, extract text, paste/edit race data, then score the race.")
+st.write("Upload screenshots, extract text, auto-build race data, then score the race.")
 
 
 def get_rating_percentage(score):
@@ -167,7 +168,10 @@ def safe_float(value):
     if value == "":
         return 0.0
 
-    return float(value)
+    try:
+        return float(value)
+    except:
+        return 0.0
 
 
 def safe_int(value):
@@ -176,7 +180,25 @@ def safe_int(value):
     if value in ["", "x", "-"]:
         return 0
 
-    return int(value)
+    try:
+        return int(value)
+    except:
+        return 0
+
+
+def extract_last_three_form_numbers(text):
+    digits = re.findall(r"\d", text)
+
+    if len(digits) >= 3:
+        return int(digits[-1]), int(digits[-2]), int(digits[-3])
+
+    if len(digits) == 2:
+        return int(digits[-1]), int(digits[-2]), 0
+
+    if len(digits) == 1:
+        return int(digits[-1]), 0, 0
+
+    return 0, 0, 0
 
 
 def calculate_scores(df):
@@ -293,6 +315,135 @@ def run_ocr(uploaded_files):
     return "\n".join(all_text)
 
 
+def build_csv_from_ocr(ocr_text):
+    lines = [line.strip() for line in ocr_text.splitlines() if line.strip()]
+
+    horse_rows = []
+
+    current_number = None
+    current_name = None
+    current_odds = 0
+    current_sky_rating = 0
+    current_weight = 0
+    current_barrier = 0
+    current_form = ""
+
+    race_number = 1
+    grade = "BM58"
+    track_condition = "Soft 7"
+    weather = "Fine"
+    distance_range = "1000m"
+
+    for line in lines:
+        lower = line.lower()
+
+        race_match = re.search(r"race\s+(\d+)", lower)
+        if race_match:
+            race_number = int(race_match.group(1))
+
+        if "bm" in lower:
+            grade_match = re.search(r"(bm\d+)", lower)
+            if grade_match:
+                grade = grade_match.group(1).upper()
+
+        if "soft" in lower:
+            track_condition = "Soft 7"
+
+        if "good" in lower:
+            track_condition = "Good"
+
+        odds_match = re.search(r"\$?(\d+\.\d+)", line)
+        if odds_match:
+            current_odds = float(odds_match.group(1))
+
+        sky_match = re.search(r"sky\s*rating\s*(\d+)", lower)
+        if sky_match:
+            current_sky_rating = int(sky_match.group(1))
+
+        weight_match = re.search(r"(\d+\.?\d*)\s*kg", lower)
+        if weight_match:
+            current_weight = float(weight_match.group(1))
+
+        barrier_match = re.search(r"barrier\s*(\d+)", lower)
+        if barrier_match:
+            current_barrier = int(barrier_match.group(1))
+
+        distance_match = re.search(r"(\d{3,4}m(?:-\d{3,4}m)?)", lower)
+        if distance_match:
+            distance_range = distance_match.group(1)
+
+        form_match = re.search(r"\b[x\d]{3,6}\b", lower)
+        if form_match:
+            current_form = form_match.group(0)
+
+        horse_match = re.match(r"^#?(\d+)\s+([A-Za-z][A-Za-z\s'\-]+)$", line)
+        if horse_match:
+            if current_number is not None and current_name is not None:
+                last_start, second_last, third_last = extract_last_three_form_numbers(current_form)
+
+                horse_rows.append([
+                    current_number,
+                    current_name,
+                    race_number,
+                    grade,
+                    current_barrier,
+                    "Unknown Jockey",
+                    "Unknown Trainer",
+                    current_odds,
+                    last_start,
+                    second_last,
+                    third_last,
+                    distance_range,
+                    current_weight,
+                    track_condition,
+                    weather,
+                    current_sky_rating
+                ])
+
+            current_number = int(horse_match.group(1))
+            current_name = horse_match.group(2).strip()
+
+            current_odds = 0
+            current_sky_rating = 0
+            current_weight = 0
+            current_barrier = 0
+            current_form = ""
+
+    if current_number is not None and current_name is not None:
+        last_start, second_last, third_last = extract_last_three_form_numbers(current_form)
+
+        horse_rows.append([
+            current_number,
+            current_name,
+            race_number,
+            grade,
+            current_barrier,
+            "Unknown Jockey",
+            "Unknown Trainer",
+            current_odds,
+            last_start,
+            second_last,
+            third_last,
+            distance_range,
+            current_weight,
+            track_condition,
+            weather,
+            current_sky_rating
+        ])
+
+    header = "horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating"
+
+    csv_lines = [header]
+
+    for row in horse_rows:
+        csv_lines.append(",".join(str(item) for item in row))
+
+    if len(csv_lines) == 1:
+        return header + "\n"
+
+    return "\n".join(csv_lines)
+
+
 example_csv = """horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating
 13,Zavega,6,BM58,1,Ben Looker,Alyssa and Troy Sweeney,3.50,1,3,1,800m-1000m,57,Soft 7,Fine,100
 3,Irish Jig,6,BM58,8,Mikayla Weir,Scott Singleton,3.20,1,6,4,1200m-1280m,62,Soft 7,Fine,93
@@ -307,28 +458,31 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-extracted_text = ""
-
 if uploaded_files:
-    if st.button("Extract text from screenshots"):
+    if st.button("Extract text and build CSV"):
         with st.spinner("Reading screenshots..."):
-            extracted_text = run_ocr(uploaded_files)
-            st.session_state["ocr_text"] = extracted_text
+            ocr_text = run_ocr(uploaded_files)
+            built_csv = build_csv_from_ocr(ocr_text)
+
+            st.session_state["ocr_text"] = ocr_text
+            st.session_state["race_csv"] = built_csv
 
 if "ocr_text" in st.session_state:
     st.subheader("2. Extracted screenshot text")
     st.text_area(
         "OCR text",
         value=st.session_state["ocr_text"],
-        height=300
+        height=250
     )
 
-st.subheader("3. Paste or edit CSV race data")
+st.subheader("3. Race CSV")
+
+default_csv = st.session_state.get("race_csv", example_csv)
 
 race_data = st.text_area(
-    "CSV race data",
-    value=example_csv,
-    height=250
+    "Check this data. Edit anything wrong before scoring.",
+    value=default_csv,
+    height=300
 )
 
 if st.button("Import and Score Race"):
