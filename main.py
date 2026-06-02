@@ -1,0 +1,3 @@
+print("BEST TIP FOR EACH RACE")
+print()
+print("GOLDEN BULLET TIP OF THE DAY")
