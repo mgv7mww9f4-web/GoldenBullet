@@ -1,6 +1,12 @@
+import tempfile
 import sqlite3
+from io import StringIO
+
 import pandas as pd
 import streamlit as st
+from PIL import Image
+from rapidocr_onnxruntime import RapidOCR
+
 
 DB_NAME = "goldenbullet.db"
 MAX_SCORE = 116
@@ -12,7 +18,7 @@ st.set_page_config(
 )
 
 st.title("🏇 Golden Bullet")
-st.write("Paste race data below, import it, score it, and generate a report.")
+st.write("Upload screenshots, extract text, paste/edit race data, then score the race.")
 
 
 def get_rating_percentage(score):
@@ -35,9 +41,6 @@ def get_confidence(score):
 
 
 def get_grade_score(grade):
-    if grade is None:
-        return 0
-
     grade = str(grade).upper()
 
     if "BM58" in grade:
@@ -160,15 +163,19 @@ def get_track_score(track_condition):
 
 def safe_float(value):
     value = str(value).replace("$", "").replace("kg", "").strip()
+
     if value == "":
         return 0.0
+
     return float(value)
 
 
 def safe_int(value):
     value = str(value).strip().lower()
+
     if value in ["", "x", "-"]:
         return 0
+
     return int(value)
 
 
@@ -177,11 +184,13 @@ def calculate_scores(df):
 
     for _, row in df.iterrows():
         sky_rating_score = get_sky_rating_score(safe_int(row["sky_rating"]))
+
         form_score = get_form_score(
             safe_int(row["last_start_position"]),
             safe_int(row["second_last_position"]),
             safe_int(row["third_last_position"])
         )
+
         distance_score = get_distance_score(row["distance_range"])
         track_score = get_track_score(row["track_condition"])
         barrier_score = get_barrier_score(safe_int(row["barrier"]))
@@ -225,18 +234,6 @@ def calculate_scores(df):
     return pd.DataFrame(scored_rows)
 
 
-def save_to_database(df):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-
-    cursor.execute("DROP TABLE IF EXISTS runners")
-
-    df.to_sql("runners", conn, if_exists="replace", index=False)
-
-    conn.commit()
-    conn.close()
-
-
 def get_bankroll():
     try:
         conn = sqlite3.connect(DB_NAME)
@@ -247,7 +244,7 @@ def get_bankroll():
 
         if result:
             return result[0]
-    except:
+    except Exception:
         pass
 
     return 100
@@ -273,31 +270,75 @@ def get_stake(score, bankroll):
     return f"${stake:.2f} win"
 
 
-example_data = """horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating
+def run_ocr(uploaded_files):
+    engine = RapidOCR()
+    all_text = []
+
+    for uploaded_file in uploaded_files:
+        image = Image.open(uploaded_file)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+            image.save(temp_file.name)
+            result, _ = engine(temp_file.name)
+
+        all_text.append(f"--- {uploaded_file.name} ---")
+
+        if result:
+            for line in result:
+                text = line[1]
+                all_text.append(text)
+
+        all_text.append("")
+
+    return "\n".join(all_text)
+
+
+example_csv = """horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating
 13,Zavega,6,BM58,1,Ben Looker,Alyssa and Troy Sweeney,3.50,1,3,1,800m-1000m,57,Soft 7,Fine,100
 3,Irish Jig,6,BM58,8,Mikayla Weir,Scott Singleton,3.20,1,6,4,1200m-1280m,62,Soft 7,Fine,93
 12,Dubalene,6,BM58,5,Luke Rolls,Colt Prosser,8.50,1,2,3,800m-1400m,57.5,Soft 7,Fine,80
 """
 
-st.subheader("1. Paste Race Data")
+st.subheader("1. Upload screenshots")
+
+uploaded_files = st.file_uploader(
+    "Upload Sportsbet/TAB screenshots",
+    type=["png", "jpg", "jpeg"],
+    accept_multiple_files=True
+)
+
+extracted_text = ""
+
+if uploaded_files:
+    if st.button("Extract text from screenshots"):
+        with st.spinner("Reading screenshots..."):
+            extracted_text = run_ocr(uploaded_files)
+            st.session_state["ocr_text"] = extracted_text
+
+if "ocr_text" in st.session_state:
+    st.subheader("2. Extracted screenshot text")
+    st.text_area(
+        "OCR text",
+        value=st.session_state["ocr_text"],
+        height=300
+    )
+
+st.subheader("3. Paste or edit CSV race data")
 
 race_data = st.text_area(
-    "Paste CSV race data here",
-    value=example_data,
+    "CSV race data",
+    value=example_csv,
     height=250
 )
 
 if st.button("Import and Score Race"):
     try:
-        from io import StringIO
-
         df = pd.read_csv(StringIO(race_data))
         scored_df = calculate_scores(df)
-        save_to_database(scored_df)
-
-        st.success("Race imported and scored successfully!")
 
         bankroll = get_bankroll()
+
+        st.success("Race scored successfully!")
 
         st.subheader("Best Tip For Each Race")
 
@@ -309,6 +350,7 @@ if st.button("Import and Score Race"):
                 f"Race {race_number}: #{best['horse_number']} {best['horse_name']} | "
                 f"Score {best['score']}/{MAX_SCORE} | "
                 f"Rating {best['rating']}% | "
+                f"Confidence {best['confidence']} | "
                 f"Stake {get_stake(best['score'], bankroll)}"
             )
 
@@ -316,6 +358,7 @@ if st.button("Import and Score Race"):
 
         for race_number in sorted(scored_df["race_number"].unique()):
             st.write(f"Race {race_number}")
+
             race_df = scored_df[scored_df["race_number"] == race_number]
             top3 = race_df.sort_values("score", ascending=False).head(3)
 
