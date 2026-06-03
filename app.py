@@ -294,6 +294,7 @@ def parse_meetings(text):
     known_tracks = [
         "Sandown",
         "Warwick Farm",
+        "WarwickFarm",
         "Doomben",
         "Moree",
         "Flemington",
