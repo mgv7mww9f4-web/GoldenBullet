@@ -15,7 +15,6 @@ except Exception:
 
 MAX_SCORE = 116
 
-
 st.set_page_config(
     page_title="Golden Bullet",
     page_icon="🏇",
@@ -23,7 +22,7 @@ st.set_page_config(
 )
 
 st.title("🏇 Golden Bullet")
-st.write("Upload meeting screenshots, create race lists, paste horse CSVs, and score races.")
+st.write("Upload meeting screenshots, build race lists, paste horse CSVs, and score races.")
 
 
 def get_rating_percentage(score):
@@ -290,52 +289,76 @@ def run_ocr(uploaded_files):
     return "\n".join(all_text)
 
 
-def parse_meetings(text):
-    known_tracks = [
-        "Sandown",
-        "Warwick Farm",
-        "WarwickFarm",
-        "Doomben",
-        "Moree",
-        "Flemington",
-        "Randwick",
-        "Rosehill",
-        "Caulfield",
-        "Morphettville",
-        "Eagle Farm",
-        "Canterbury",
-        "Geelong",
-        "Ballarat",
-        "Bendigo",
-        "Belmont",
-        "Ascot",
-        "Murray Bridge",
-        "Gawler"
-    ]
+def normalise_track_name(line):
+    cleaned = line.lower().replace(" ", "")
 
+    track_map = {
+        "sandown": "Sandown",
+        "warwickfarm": "Warwick Farm",
+        "doomben": "Doomben",
+        "moree": "Moree",
+        "flemington": "Flemington",
+        "randwick": "Randwick",
+        "rosehill": "Rosehill",
+        "caulfield": "Caulfield",
+        "morphettville": "Morphettville",
+        "eaglefarm": "Eagle Farm",
+        "canterbury": "Canterbury",
+        "geelong": "Geelong",
+        "ballarat": "Ballarat",
+        "bendigo": "Bendigo",
+        "belmont": "Belmont",
+        "ascot": "Ascot",
+        "murraybridge": "Murray Bridge",
+        "gawler": "Gawler"
+    }
+
+    for key, track_name in track_map.items():
+        if key in cleaned:
+            return track_name
+
+    return None
+
+
+def parse_meetings(text):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     meetings = {}
+    current_track = None
 
-    for i, line in enumerate(lines):
-        matched_track = None
+    ignore_words = [
+        "fo",
+        "sky",
+        "sky1",
+        "australia",
+        "fixed",
+        "odds",
+        "racing"
+    ]
 
-        for track in known_tracks:
-            if track.lower() in line.lower():
-                matched_track = track
-                break
+    for line in lines:
+        track_name = normalise_track_name(line)
 
-        if matched_track:
-            nearby_lines = lines[i:i + 6]
-            nearby_text = " ".join(nearby_lines)
+        if track_name:
+            current_track = track_name
 
-            times = re.findall(r"\b\d{1,2}:\d{2}\b", nearby_text)
+            if current_track not in meetings:
+                meetings[current_track] = []
 
-            clean_times = []
-            for time in times:
-                if time not in clean_times:
-                    clean_times.append(time)
+            continue
 
-            meetings[matched_track] = clean_times[:10]
+        if current_track is None:
+            continue
+
+        lower_line = line.lower().strip()
+
+        if lower_line in ignore_words:
+            continue
+
+        times = re.findall(r"\b\d{1,2}:\d{2}\b", line)
+
+        for time in times:
+            if time not in meetings[current_track]:
+                meetings[current_track].append(time)
 
     return meetings
 
