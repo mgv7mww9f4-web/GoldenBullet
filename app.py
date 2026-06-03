@@ -56,6 +56,37 @@ def parse_meetings(text):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     meetings = {}
 
+    for i, line in enumerate(lines):
+        matched_track = None
+
+        for track in known_tracks:
+            if track.lower() in line.lower():
+                matched_track = track
+                break
+
+        if matched_track:
+            meetings[matched_track] = []
+
+            # Look only at the next few lines after the track name
+            nearby_lines = lines[i:i + 8]
+            nearby_text = " ".join(nearby_lines)
+
+            times = re.findall(r"\b\d{1,2}:\d{2}\b", nearby_text)
+
+            # Remove duplicate times while keeping order
+            clean_times = []
+            for time in times:
+                if time not in clean_times:
+                    clean_times.append(time)
+
+            meetings[matched_track] = clean_times[:10]
+
+    return meetings
+    ]
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    meetings = {}
+
     current_track = None
 
     for line in lines:
