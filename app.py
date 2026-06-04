@@ -7,7 +7,8 @@ import requests
 import streamlit as st
 
 MAX_SCORE = 116
-HISTORY_FILE = "golden_bullet_history.csv"
+RACE_HISTORY_FILE = "race_history.csv"
+SELECTION_HISTORY_FILE = "selection_history.csv"
 
 st.set_page_config(page_title="Golden Bullet", page_icon="🏇", layout="wide")
 st.title("🏇 Golden Bullet")
@@ -44,6 +45,7 @@ def get_rating_percentage(score):
 
 def get_confidence(score):
     rating = get_rating_percentage(score)
+
     if rating >= 85:
         return "Elite"
     elif rating >= 75:
@@ -52,11 +54,13 @@ def get_confidence(score):
         return "High"
     elif rating >= 55:
         return "Medium"
-    return "Low"
+    else:
+        return "Low"
 
 
 def get_grade_score(grade):
     grade = str(grade).upper()
+
     if "BM58" in grade:
         return 6
     elif "BM64" in grade:
@@ -65,7 +69,8 @@ def get_grade_score(grade):
         return 4
     elif "MAIDEN" in grade or "MDN" in grade:
         return 3
-    return 3
+    else:
+        return 3
 
 
 def get_barrier_score(barrier):
@@ -73,7 +78,8 @@ def get_barrier_score(barrier):
         return 8
     elif 5 <= barrier <= 8:
         return 5
-    return 2
+    else:
+        return 2
 
 
 def get_form_score(last_start, second_last, third_last):
@@ -102,7 +108,8 @@ def get_weight_score(weight):
         return 8
     elif weight <= 59:
         return 5
-    return 2
+    else:
+        return 2
 
 
 def get_market_score(odds):
@@ -118,7 +125,8 @@ def get_market_score(odds):
         return 5
     elif odds <= 40:
         return 2
-    return 0
+    else:
+        return 0
 
 
 def get_sky_rating_score(rating):
@@ -132,11 +140,13 @@ def get_sky_rating_score(rating):
         return 7
     elif rating >= 70:
         return 4
-    return 0
+    else:
+        return 0
 
 
 def get_distance_score(distance):
     distance = str(distance).lower()
+
     if "1400" in distance:
         return 10
     elif "1300" in distance:
@@ -145,18 +155,21 @@ def get_distance_score(distance):
         return 6
     elif "1000" in distance or "1100" in distance:
         return 5
-    return 4
+    else:
+        return 4
 
 
 def get_track_score(track):
     track = str(track).lower()
+
     if "soft" in track:
         return 8
     elif "good" in track:
         return 6
     elif "heavy" in track:
         return 5
-    return 4
+    else:
+        return 4
 
 
 def calculate_scores(df):
@@ -164,11 +177,13 @@ def calculate_scores(df):
 
     for _, row in df.iterrows():
         sky_rating_score = get_sky_rating_score(safe_int(row.get("sky_rating", 0)))
+
         form_score = get_form_score(
             safe_int(row.get("last_start_position", 0)),
             safe_int(row.get("second_last_position", 0)),
             safe_int(row.get("third_last_position", 0))
         )
+
         distance_score = get_distance_score(row.get("distance_range", ""))
         track_score = get_track_score(row.get("track_condition", ""))
         barrier_score = get_barrier_score(safe_int(row.get("barrier", 0)))
@@ -179,9 +194,16 @@ def calculate_scores(df):
         market_score = get_market_score(safe_float(row.get("odds", 0)))
 
         total_score = (
-            sky_rating_score + form_score + distance_score + track_score +
-            barrier_score + jockey_score + trainer_score + grade_score +
-            weight_score + market_score
+            sky_rating_score
+            + form_score
+            + distance_score
+            + track_score
+            + barrier_score
+            + jockey_score
+            + trainer_score
+            + grade_score
+            + weight_score
+            + market_score
         )
 
         row_data = row.to_dict()
@@ -198,6 +220,7 @@ def calculate_scores(df):
         row_data["grade_score"] = grade_score
         row_data["weight_score"] = weight_score
         row_data["market_score"] = market_score
+
         scored_rows.append(row_data)
 
     return pd.DataFrame(scored_rows)
@@ -222,16 +245,26 @@ def get_stake(score, bankroll):
 
 def call_formfav_form(race_date, track, race):
     url = "https://api.formfav.com/v1/form"
-    headers = {"X-API-Key": FORMFAV_API_KEY, "Accept": "application/json"}
-    params = {"date": race_date, "track": track, "race": race}
+    headers = {
+        "X-API-Key": FORMFAV_API_KEY,
+        "Accept": "application/json"
+    }
+    params = {
+        "date": race_date,
+        "track": track,
+        "race": race
+    }
+
     return requests.get(url, headers=headers, params=params, timeout=30)
 
 
 def find_runners(data):
     if isinstance(data, list):
         return data
+
     if not isinstance(data, dict):
         return []
+
     if "runners" in data and isinstance(data["runners"], list):
         return data["runners"]
 
@@ -240,6 +273,7 @@ def find_runners(data):
             runners = find_runners(value)
             if runners:
                 return runners
+
     return []
 
 
@@ -260,17 +294,22 @@ def get_recent_form_positions(form):
         return digits[-1], digits[-2], 0
     elif len(digits) == 1:
         return digits[-1], 0, 0
-    return 0, 0, 0
+    else:
+        return 0, 0, 0
 
 
 def get_rating_from_runner(runner):
     stats = runner.get("stats", {})
+
     if isinstance(stats, dict):
         overall = stats.get("overall", {})
+
         if isinstance(overall, dict):
             place_percent = safe_float(overall.get("placePercent", 0))
             win_percent = safe_float(overall.get("winPercent", 0))
+
             return round((place_percent * 70) + (win_percent * 30))
+
     return 0
 
 
@@ -321,10 +360,12 @@ def apply_odds_to_df(df, odds_text):
 
     for line in odds_text.strip().splitlines():
         line = line.strip()
+
         if line == "":
             continue
 
         parts = line.split(",")
+
         if len(parts) < 2:
             continue
 
@@ -333,55 +374,133 @@ def apply_odds_to_df(df, odds_text):
         odds_map[horse_number] = odds
 
     df = df.copy()
+
     df["odds"] = df["horse_number"].apply(
         lambda horse_number: odds_map.get(safe_int(horse_number), 0)
     )
+
     return df
 
 
 def build_odds_template(df):
     lines = []
+
     for _, row in df.iterrows():
         lines.append(f"{row['horse_number']},0")
+
     return "\n".join(lines)
 
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        return pd.read_csv(HISTORY_FILE)
+def load_race_history():
+    if os.path.exists(RACE_HISTORY_FILE):
+        return pd.read_csv(RACE_HISTORY_FILE)
+
     return pd.DataFrame(columns=[
-        "date", "track", "race_number", "pick_type", "horse_number",
+        "race_id", "date", "track", "race_number", "horse_number",
         "horse_name", "odds", "score", "rating", "confidence",
-        "stake", "finish_position", "result", "profit_loss"
+        "finish_position"
     ])
 
 
-def save_history(history_df):
-    history_df.to_csv(HISTORY_FILE, index=False)
+def save_race_history(df):
+    df.to_csv(RACE_HISTORY_FILE, index=False)
 
 
-def save_pick_to_history(race_date, track, race_number, pick_type, pick, stake):
-    history_df = load_history()
+def load_selection_history():
+    if os.path.exists(SELECTION_HISTORY_FILE):
+        return pd.read_csv(SELECTION_HISTORY_FILE)
 
-    new_row = {
-        "date": str(race_date),
-        "track": track,
-        "race_number": race_number,
-        "pick_type": pick_type,
-        "horse_number": pick["horse_number"],
-        "horse_name": pick["horse_name"],
-        "odds": pick["odds"],
-        "score": pick["score"],
-        "rating": pick["rating"],
-        "confidence": pick["confidence"],
-        "stake": stake,
-        "finish_position": "",
-        "result": "Pending",
-        "profit_loss": 0
-    }
+    return pd.DataFrame(columns=[
+        "race_id", "date", "track", "race_number", "pick_type",
+        "horse_number", "horse_name", "odds", "score", "rating",
+        "confidence", "stake", "finish_position", "result", "profit_loss"
+    ])
 
-    history_df = pd.concat([history_df, pd.DataFrame([new_row])], ignore_index=True)
-    save_history(history_df)
+
+def save_selection_history(df):
+    df.to_csv(SELECTION_HISTORY_FILE, index=False)
+
+
+def build_race_id(race_date, track, race_number):
+    clean_track = str(track).strip().lower().replace(" ", "_")
+    return f"{race_date}_{clean_track}_R{race_number}"
+
+
+def save_full_race_card(race_date, track, race_number, scored_df, bankroll):
+    race_id = build_race_id(race_date, track, race_number)
+
+    race_history = load_race_history()
+    race_history = race_history[race_history["race_id"] != race_id]
+
+    race_rows = []
+
+    for _, row in scored_df.iterrows():
+        race_rows.append({
+            "race_id": race_id,
+            "date": str(race_date),
+            "track": track,
+            "race_number": race_number,
+            "horse_number": row["horse_number"],
+            "horse_name": row["horse_name"],
+            "odds": row["odds"],
+            "score": row["score"],
+            "rating": row["rating"],
+            "confidence": row["confidence"],
+            "finish_position": ""
+        })
+
+    race_history = pd.concat([race_history, pd.DataFrame(race_rows)], ignore_index=True)
+    save_race_history(race_history)
+
+    selection_history = load_selection_history()
+    selection_history = selection_history[selection_history["race_id"] != race_id]
+
+    sorted_df = scored_df.sort_values("score", ascending=False)
+
+    selections = []
+
+    golden = sorted_df.iloc[0]
+    selections.append(("Golden Bullet", golden, get_stake(golden["score"], bankroll)))
+
+    for _, row in sorted_df.head(3).iterrows():
+        selections.append(("Best Tip", row, get_stake(row["score"], bankroll)))
+
+    roughies = scored_df[
+        (scored_df["odds"].astype(float) >= 15)
+        & (scored_df["score"].astype(float) >= 65)
+    ]
+
+    if len(roughies) > 0:
+        roughie = roughies.sort_values("score", ascending=False).iloc[0]
+        selections.append(("Roughie Chance", roughie, round(bankroll * 0.01, 2)))
+
+    selection_rows = []
+
+    for pick_type, row, stake in selections:
+        selection_rows.append({
+            "race_id": race_id,
+            "date": str(race_date),
+            "track": track,
+            "race_number": race_number,
+            "pick_type": pick_type,
+            "horse_number": row["horse_number"],
+            "horse_name": row["horse_name"],
+            "odds": row["odds"],
+            "score": row["score"],
+            "rating": row["rating"],
+            "confidence": row["confidence"],
+            "stake": stake,
+            "finish_position": "",
+            "result": "Pending",
+            "profit_loss": 0
+        })
+
+    selection_history = pd.concat(
+        [selection_history, pd.DataFrame(selection_rows)],
+        ignore_index=True
+    )
+
+    save_selection_history(selection_history)
 
 
 def calculate_profit_loss(stake, odds, finish_position):
@@ -399,80 +518,40 @@ def calculate_profit_loss(stake, odds, finish_position):
     return round(-stake, 2), "Loss"
 
 
-def update_history_result(row_index, finish_position):
-    history_df = load_history()
+def update_results_for_race(race_id, first, second, third):
+    placing_map = {
+        safe_int(first): 1,
+        safe_int(second): 2,
+        safe_int(third): 3
+    }
 
-    stake = history_df.loc[row_index, "stake"]
-    odds = history_df.loc[row_index, "odds"]
+    race_history = load_race_history()
 
-    profit_loss, result = calculate_profit_loss(stake, odds, finish_position)
+    for index, row in race_history.iterrows():
+        if row["race_id"] == race_id:
+            horse_number = safe_int(row["horse_number"])
+            race_history.loc[index, "finish_position"] = placing_map.get(horse_number, 99)
 
-    history_df.loc[row_index, "finish_position"] = finish_position
-    history_df.loc[row_index, "result"] = result
-    history_df.loc[row_index, "profit_loss"] = profit_loss
+    save_race_history(race_history)
 
-    save_history(history_df)
+    selection_history = load_selection_history()
 
+    for index, row in selection_history.iterrows():
+        if row["race_id"] == race_id:
+            horse_number = safe_int(row["horse_number"])
+            finish_position = placing_map.get(horse_number, 99)
 
-def show_history_dashboard():
-    history_df = load_history()
+            profit_loss, result = calculate_profit_loss(
+                row["stake"],
+                row["odds"],
+                finish_position
+            )
 
-    if history_df.empty:
-        st.info("No saved tips yet.")
-        return
+            selection_history.loc[index, "finish_position"] = finish_position
+            selection_history.loc[index, "result"] = result
+            selection_history.loc[index, "profit_loss"] = profit_loss
 
-    total_tips = len(history_df)
-    completed = history_df[history_df["result"] != "Pending"]
-    total_completed = len(completed)
-
-    wins = len(completed[completed["result"] == "Win"])
-    places = len(completed[completed["finish_position"].astype(str).isin(["1", "2", "3"])])
-    total_staked = completed["stake"].astype(float).sum() if total_completed > 0 else 0
-    profit_loss = completed["profit_loss"].astype(float).sum() if total_completed > 0 else 0
-
-    win_rate = (wins / total_completed * 100) if total_completed > 0 else 0
-    place_rate = (places / total_completed * 100) if total_completed > 0 else 0
-    roi = (profit_loss / total_staked * 100) if total_staked > 0 else 0
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Saved Tips", total_tips)
-    col2.metric("Completed", total_completed)
-    col3.metric("Win Rate", f"{win_rate:.1f}%")
-    col4.metric("Place Rate", f"{place_rate:.1f}%")
-
-    col5, col6, col7 = st.columns(3)
-    col5.metric("Total Staked", f"${total_staked:.2f}")
-    col6.metric("Profit/Loss", f"${profit_loss:.2f}")
-    col7.metric("ROI", f"{roi:.1f}%")
-
-    st.subheader("Tip History")
-    st.dataframe(history_df, use_container_width=True)
-
-    st.subheader("Enter Result")
-    pending_df = history_df[history_df["result"] == "Pending"]
-
-    if pending_df.empty:
-        st.success("No pending tips.")
-    else:
-        options = {
-            f"{idx}: {row['date']} {row['track']} R{row['race_number']} - #{row['horse_number']} {row['horse_name']}":
-            idx
-            for idx, row in pending_df.iterrows()
-        }
-
-        selected_label = st.selectbox("Select pending tip", list(options.keys()))
-        selected_index = options[selected_label]
-
-        finish_position = st.number_input(
-            "Finish position",
-            min_value=1,
-            max_value=30,
-            value=1
-        )
-
-        if st.button("Save Result"):
-            update_history_result(selected_index, finish_position)
-            st.success("Result saved. Refresh the page to update stats.")
+    save_selection_history(selection_history)
 
 
 def display_scored_race(scored_df, bankroll, race_date, track, race_number):
@@ -480,11 +559,16 @@ def display_scored_race(scored_df, bankroll, race_date, track, race_number):
         st.warning("No runners found.")
         return
 
+    save_full_race_card(race_date, track, race_number, scored_df, bankroll)
+
     sorted_df = scored_df.sort_values("score", ascending=False)
     best = sorted_df.iloc[0]
     best_stake = get_stake(best["score"], bankroll)
 
+    st.success("Race card and selections saved automatically.")
+
     st.subheader("🏆 Golden Bullet")
+
     st.success(
         f"#{best['horse_number']} {best['horse_name']} | "
         f"Odds ${best['odds']} | "
@@ -494,26 +578,17 @@ def display_scored_race(scored_df, bankroll, race_date, track, race_number):
         f"Stake ${best_stake:.2f} win"
     )
 
-    if st.button("Save Golden Bullet Tip"):
-        save_pick_to_history(race_date, track, race_number, "Golden Bullet", best, best_stake)
-        st.success("Golden Bullet saved to history.")
-
     st.subheader("Top 3 Chances")
+
     st.dataframe(
-        sorted_df.head(3)[["horse_number", "horse_name", "odds", "score", "rating", "confidence"]],
+        sorted_df.head(3)[[
+            "horse_number", "horse_name", "odds", "score", "rating", "confidence"
+        ]],
         use_container_width=True
     )
 
-    st.subheader("Save Best Tips")
-    top3 = sorted_df.head(3)
-
-    for _, row in top3.iterrows():
-        stake = get_stake(row["score"], bankroll)
-        if st.button(f"Save Best Tip: #{row['horse_number']} {row['horse_name']}"):
-            save_pick_to_history(race_date, track, race_number, "Best Tip", row, stake)
-            st.success(f"Saved #{row['horse_number']} {row['horse_name']} to history.")
-
     st.subheader("Score Breakdown")
+
     st.json({
         "Sky Rating": f"{best['sky_rating_score']}/15",
         "Form": f"{best['form_score']}/35",
@@ -528,6 +603,7 @@ def display_scored_race(scored_df, bankroll, race_date, track, race_number):
     })
 
     st.subheader("Roughie Chance")
+
     roughies = scored_df[
         (scored_df["odds"].astype(float) >= 15)
         & (scored_df["score"].astype(float) >= 65)
@@ -544,12 +620,73 @@ def display_scored_race(scored_df, bankroll, race_date, track, race_number):
             f"Rating {roughie['rating']}% | "
             f"Stake ${roughie_stake:.2f} each-way"
         )
-
-        if st.button("Save Roughie Chance"):
-            save_pick_to_history(race_date, track, race_number, "Roughie Chance", roughie, roughie_stake)
-            st.success("Roughie Chance saved to history.")
     else:
         st.write("No Roughie Chance found.")
+
+
+def show_results_tracker():
+    race_history = load_race_history()
+    selection_history = load_selection_history()
+
+    if selection_history.empty:
+        st.info("No saved races yet.")
+        return
+
+    completed = selection_history[selection_history["result"] != "Pending"]
+
+    total_selections = len(selection_history)
+    total_completed = len(completed)
+
+    wins = len(completed[completed["result"] == "Win"])
+    places = len(completed[completed["finish_position"].astype(str).isin(["1", "2", "3"])])
+
+    total_staked = completed["stake"].astype(float).sum() if total_completed > 0 else 0
+    profit_loss = completed["profit_loss"].astype(float).sum() if total_completed > 0 else 0
+
+    win_rate = (wins / total_completed * 100) if total_completed > 0 else 0
+    place_rate = (places / total_completed * 100) if total_completed > 0 else 0
+    roi = (profit_loss / total_staked * 100) if total_staked > 0 else 0
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Selections", total_selections)
+    col2.metric("Completed", total_completed)
+    col3.metric("Win Rate", f"{win_rate:.1f}%")
+    col4.metric("Place Rate", f"{place_rate:.1f}%")
+
+    col5, col6, col7 = st.columns(3)
+    col5.metric("Total Staked", f"${total_staked:.2f}")
+    col6.metric("Profit/Loss", f"${profit_loss:.2f}")
+    col7.metric("ROI", f"{roi:.1f}%")
+
+    st.subheader("Enter Race Result")
+
+    race_options_df = race_history[["race_id", "date", "track", "race_number"]].drop_duplicates()
+
+    if race_options_df.empty:
+        st.info("No races saved yet.")
+    else:
+        options = {}
+
+        for _, row in race_options_df.iterrows():
+            label = f"{row['date']} {row['track']} R{row['race_number']}"
+            options[label] = row["race_id"]
+
+        selected_label = st.selectbox("Select race", list(options.keys()))
+        selected_race_id = options[selected_label]
+
+        first = st.number_input("1st horse number", min_value=1, max_value=30, value=1)
+        second = st.number_input("2nd horse number", min_value=1, max_value=30, value=2)
+        third = st.number_input("3rd horse number", min_value=1, max_value=30, value=3)
+
+        if st.button("Save Race Result"):
+            update_results_for_race(selected_race_id, first, second, third)
+            st.success("Race result saved.")
+
+    st.subheader("Selection History")
+    st.dataframe(selection_history, use_container_width=True)
+
+    st.subheader("Full Race Card History")
+    st.dataframe(race_history, use_container_width=True)
 
 
 st.write("Load runners from FormFav, paste odds, score races, and track results.")
@@ -604,16 +741,9 @@ with tab1:
 
         st.dataframe(
             st.session_state["formfav_df"][[
-                "horse_number",
-                "horse_name",
-                "barrier",
-                "jockey",
-                "trainer",
-                "weight_carried",
-                "last_start_position",
-                "second_last_position",
-                "third_last_position",
-                "sky_rating"
+                "horse_number", "horse_name", "barrier", "jockey",
+                "trainer", "weight_carried", "last_start_position",
+                "second_last_position", "third_last_position", "sky_rating"
             ]],
             use_container_width=True
         )
@@ -630,12 +760,23 @@ with tab1:
 
         if st.button("Apply Odds And Score"):
             try:
-                df_with_odds = apply_odds_to_df(st.session_state["formfav_df"], odds_text)
+                df_with_odds = apply_odds_to_df(
+                    st.session_state["formfav_df"],
+                    odds_text
+                )
+
                 st.subheader("Final Race Data")
                 st.dataframe(df_with_odds, use_container_width=True)
 
                 scored_df = calculate_scores(df_with_odds)
-                display_scored_race(scored_df, bankroll, race_date, track, int(race))
+
+                display_scored_race(
+                    scored_df,
+                    bankroll,
+                    race_date,
+                    track,
+                    int(race)
+                )
 
             except Exception as error:
                 st.error("Could not apply odds and score.")
@@ -661,7 +802,14 @@ with tab2:
         try:
             df = pd.read_csv(StringIO(horse_csv))
             scored_df = calculate_scores(df)
-            display_scored_race(scored_df, bankroll, manual_date, manual_track, int(manual_race))
+
+            display_scored_race(
+                scored_df,
+                bankroll,
+                manual_date,
+                manual_track,
+                int(manual_race)
+            )
 
         except Exception as error:
             st.error("Something went wrong while scoring.")
@@ -670,4 +818,4 @@ with tab2:
 
 with tab3:
     st.subheader("Results Tracker")
-    show_history_dashboard()
+    show_results_tracker()
