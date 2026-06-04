@@ -1,9 +1,7 @@
 from io import StringIO
-
 import pandas as pd
 import requests
 import streamlit as st
-
 
 MAX_SCORE = 116
 
@@ -16,11 +14,31 @@ st.set_page_config(
 st.title("🏇 Golden Bullet")
 
 try:
-    API_KEY = st.secrets["ODDS_API_KEY"]
-    st.success(f"Odds API Connected: {API_KEY[:6]}...")
+    FORMFAV_API_KEY = st.secrets["FORMFAV_API_KEY"]
+    st.success(f"FormFav API Connected: {FORMFAV_API_KEY[:6]}...")
 except Exception:
-    API_KEY = None
-    st.error("Odds API key not found. Add ODDS_API_KEY to Streamlit Secrets.")
+    FORMFAV_API_KEY = None
+    st.error("FormFav API key not found. Add FORMFAV_API_KEY to Streamlit Secrets.")
+
+st.write("Use FormFav to test live racing data, or paste CSV manually.")
+
+
+def safe_float(value):
+    value = str(value).replace("$", "").replace("kg", "").strip()
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def safe_int(value):
+    value = str(value).strip().lower()
+    if value in ["", "x", "-", "nan"]:
+        return 0
+    try:
+        return int(float(value))
+    except Exception:
+        return 0
 
 
 def get_rating_percentage(score):
@@ -40,30 +58,6 @@ def get_confidence(score):
         return "Medium"
     else:
         return "Low"
-
-
-def safe_float(value):
-    value = str(value).replace("$", "").replace("kg", "").strip()
-
-    if value == "":
-        return 0.0
-
-    try:
-        return float(value)
-    except Exception:
-        return 0.0
-
-
-def safe_int(value):
-    value = str(value).strip().lower()
-
-    if value in ["", "x", "-", "nan"]:
-        return 0
-
-    try:
-        return int(float(value))
-    except Exception:
-        return 0
 
 
 def get_grade_score(grade):
@@ -262,122 +256,16 @@ def get_stake(score, bankroll):
     return f"${stake:.2f} win"
 
 
-def fetch_sports():
-    url = "https://api.the-odds-api.com/v4/sports"
-    response = requests.get(
-        url,
-        params={
-            "apiKey": API_KEY,
-            "all": "true"
-        },
-        timeout=20
-    )
-
-    if response.status_code != 200:
-        raise Exception(response.text)
-
-    return response.json()
-
-
-def fetch_odds(sport_key, market):
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-
-    response = requests.get(
-        url,
-        params={
-            "apiKey": API_KEY,
-            "regions": "au",
-            "markets": market,
-            "oddsFormat": "decimal",
-            "dateFormat": "iso"
-        },
-        timeout=20
-    )
-
-    if response.status_code != 200:
-        raise Exception(response.text)
-
-    return response.json(), response.headers
-
-
-def find_racing_sports(sports):
-    racing_sports = []
-
-    for sport in sports:
-        combined_text = (
-            str(sport.get("key", "")) + " " +
-            str(sport.get("group", "")) + " " +
-            str(sport.get("title", "")) + " " +
-            str(sport.get("description", ""))
-        ).lower()
-
-        if "horse" in combined_text or "racing" in combined_text:
-            racing_sports.append(sport)
-
-    return racing_sports
-
-
-def odds_events_to_table(events):
-    rows = []
-
-    for event in events:
-        event_name = event.get("home_team") or event.get("title") or event.get("id")
-
-        for bookmaker in event.get("bookmakers", []):
-            bookmaker_name = bookmaker.get("title", bookmaker.get("key", "Unknown"))
-
-            for market in bookmaker.get("markets", []):
-                market_key = market.get("key", "")
-
-                for outcome in market.get("outcomes", []):
-                    rows.append({
-                        "event_id": event.get("id"),
-                        "event": event_name,
-                        "commence_time": event.get("commence_time"),
-                        "bookmaker": bookmaker_name,
-                        "market": market_key,
-                        "runner": outcome.get("name"),
-                        "odds": outcome.get("price")
-                    })
-
-    return pd.DataFrame(rows)
-
-
-def odds_table_to_csv(df, race_number):
-    csv_rows = []
-
-    for index, row in df.iterrows():
-        csv_rows.append({
-            "horse_number": index + 1,
-            "horse_name": row["runner"],
-            "race_number": race_number,
-            "grade": "API",
-            "barrier": 0,
-            "jockey": "Unknown",
-            "trainer": "Unknown",
-            "odds": row["odds"],
-            "last_start_position": 0,
-            "second_last_position": 0,
-            "third_last_position": 0,
-            "distance_range": "Unknown",
-            "weight_carried": 0,
-            "track_condition": "Unknown",
-            "weather": "Unknown",
-            "sky_rating": 0
-        })
-
-    return pd.DataFrame(csv_rows).to_csv(index=False)
-
-
 def display_scored_race(scored_df, bankroll):
     st.success("Race scored successfully!")
 
-    st.subheader("Best Tip")
-
     best = scored_df.sort_values("score", ascending=False).iloc[0]
 
-    st.info(
+    st.subheader("Golden Bullet")
+
+    st.success(
         f"#{best['horse_number']} {best['horse_name']} | "
+        f"Odds ${best['odds']} | "
         f"Score {best['score']}/{MAX_SCORE} | "
         f"Rating {best['rating']}% | "
         f"Confidence {best['confidence']} | "
@@ -400,18 +288,8 @@ def display_scored_race(scored_df, bankroll):
         use_container_width=True
     )
 
-    st.subheader("Golden Bullet")
+    st.subheader("Score Breakdown")
 
-    st.success(
-        f"#{best['horse_number']} {best['horse_name']} | "
-        f"Odds ${best['odds']} | "
-        f"Score {best['score']}/{MAX_SCORE} | "
-        f"Rating {best['rating']}% | "
-        f"Confidence {best['confidence']} | "
-        f"Stake {get_stake(best['score'], bankroll)}"
-    )
-
-    st.write("Score Breakdown")
     st.json({
         "Sky Rating": f"{best['sky_rating_score']}/15",
         "Form": f"{best['form_score']}/35",
@@ -446,140 +324,101 @@ def display_scored_race(scored_df, bankroll):
         st.write("No Roughie Chance found.")
 
 
-st.write(
-    "Use the Odds API test section first. If horse racing appears, load odds, "
-    "turn them into CSV, then add missing form/barrier/weight data if needed."
-)
+def call_formfav(endpoint):
+    base_url = "https://api.formfav.com"
+
+    url = base_url + endpoint
+
+    headers = {
+        "Authorization": f"Bearer {FORMFAV_API_KEY}",
+        "X-API-Key": FORMFAV_API_KEY,
+        "Accept": "application/json"
+    }
+
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=30
+    )
+
+    return response
+
+
+def flatten_json_to_table(data):
+    if isinstance(data, list):
+        return pd.json_normalize(data)
+
+    if isinstance(data, dict):
+        for key in ["data", "meetings", "races", "results"]:
+            if key in data and isinstance(data[key], list):
+                return pd.json_normalize(data[key])
+
+        return pd.json_normalize(data)
+
+    return pd.DataFrame()
+
 
 bankroll = st.number_input("Bankroll", min_value=1.0, value=150.0, step=1.0)
 
-tab1, tab2 = st.tabs(["Live Odds API", "Manual CSV Scorer"])
+tab1, tab2 = st.tabs(["FormFav API Test", "Manual CSV Scorer"])
 
 with tab1:
-    st.subheader("1. Find Racing Sports From The Odds API")
+    st.subheader("FormFav API Test")
 
-    if API_KEY is None:
-        st.error("Add ODDS_API_KEY in Streamlit Secrets first.")
+    st.write(
+        "FormFav says it offers meetings, race form, predictions, jockey/trainer data, "
+        "track bias and racing form through a REST API. This test checks which endpoint responds."
+    )
+
+    if FORMFAV_API_KEY is None:
+        st.error("Add FORMFAV_API_KEY to Streamlit Secrets first.")
     else:
-        if st.button("Load Available Sports"):
+        endpoint = st.text_input(
+            "Endpoint to test",
+            value="/v1/meetings"
+        )
+
+        st.write("Try these one at a time if the first does not work:")
+        st.code(
+            """/v1/meetings
+/v1/races
+/v1/race-form
+/v1/predictions
+/api/v1/meetings
+/api/v1/races
+/api/v1/race-form
+/api/v1/predictions"""
+        )
+
+        if st.button("Test FormFav Endpoint"):
             try:
-                sports = fetch_sports()
-                racing_sports = find_racing_sports(sports)
+                response = call_formfav(endpoint)
 
-                st.session_state["sports"] = sports
-                st.session_state["racing_sports"] = racing_sports
+                st.write("Status code:", response.status_code)
+                st.write("Final URL:", response.url)
 
-                st.success(f"Loaded {len(sports)} sports.")
-                st.write(f"Found {len(racing_sports)} racing-related sports.")
+                try:
+                    data = response.json()
+                    st.session_state["formfav_response"] = data
+
+                    st.subheader("Raw JSON")
+                    st.json(data)
+
+                    st.subheader("Table View")
+                    table = flatten_json_to_table(data)
+
+                    if len(table) > 0:
+                        st.dataframe(table, use_container_width=True)
+                    else:
+                        st.warning("No table could be created from this response.")
+
+                except Exception:
+                    st.subheader("Raw Text")
+                    st.text(response.text)
 
             except Exception as error:
-                st.error("Could not load sports.")
+                st.error("Could not call FormFav.")
                 st.write(error)
-
-    if "racing_sports" in st.session_state:
-        racing_sports = st.session_state["racing_sports"]
-
-        if len(racing_sports) == 0:
-            st.warning("No horse racing sports found on your current Odds API plan/feed.")
-            st.write("All available sports:")
-            st.dataframe(pd.DataFrame(st.session_state["sports"]), use_container_width=True)
-        else:
-            sport_options = {
-                f"{sport.get('title')} | {sport.get('key')}": sport.get("key")
-                for sport in racing_sports
-            }
-
-            selected_sport_label = st.selectbox(
-                "Select racing sport",
-                list(sport_options.keys())
-            )
-
-            selected_sport_key = sport_options[selected_sport_label]
-
-            market = st.selectbox(
-                "Market",
-                ["h2h", "outrights"],
-                index=0
-            )
-
-            if st.button("Load Odds For Selected Sport"):
-                try:
-                    events, headers = fetch_odds(selected_sport_key, market)
-
-                    st.session_state["odds_events"] = events
-                    st.session_state["odds_headers"] = dict(headers)
-
-                    st.success(f"Loaded {len(events)} events.")
-                    st.write(
-                        "Requests remaining:",
-                        headers.get("x-requests-remaining", "Unknown")
-                    )
-
-                except Exception as error:
-                    st.error("Could not load odds.")
-                    st.write(error)
-
-    if "odds_events" in st.session_state:
-        st.subheader("2. Odds Results")
-
-        events = st.session_state["odds_events"]
-
-        if len(events) == 0:
-            st.warning("No odds returned for this sport/market.")
-        else:
-            odds_df = odds_events_to_table(events)
-
-            if len(odds_df) == 0:
-                st.warning("Events loaded, but no bookmaker outcomes were found.")
-                st.json(events[0])
-            else:
-                st.dataframe(odds_df, use_container_width=True)
-
-                events_list = sorted(odds_df["event"].dropna().unique())
-
-                selected_event = st.selectbox(
-                    "Select event/race",
-                    events_list
-                )
-
-                event_df = odds_df[odds_df["event"] == selected_event]
-
-                bookmakers = sorted(event_df["bookmaker"].dropna().unique())
-
-                selected_bookmaker = st.selectbox(
-                    "Select bookmaker",
-                    bookmakers
-                )
-
-                bookmaker_df = event_df[event_df["bookmaker"] == selected_bookmaker]
-
-                race_number = st.number_input(
-                    "Race number for CSV",
-                    min_value=1,
-                    max_value=20,
-                    value=1,
-                    key="api_race_number"
-                )
-
-                generated_csv = odds_table_to_csv(bookmaker_df, race_number)
-
-                st.subheader("3. Generated CSV From Odds API")
-                st.write("This includes names and odds. Add form/barrier/weight/Sky Rating later if you have them.")
-
-                api_csv = st.text_area(
-                    "Generated CSV",
-                    value=generated_csv,
-                    height=300
-                )
-
-                if st.button("Score API CSV"):
-                    try:
-                        df = pd.read_csv(StringIO(api_csv))
-                        scored_df = calculate_scores(df)
-                        display_scored_race(scored_df, bankroll)
-                    except Exception as error:
-                        st.error("Could not score API CSV.")
-                        st.write(error)
 
 
 with tab2:
