@@ -1,19 +1,9 @@
-import re
-import tempfile
 from io import StringIO
 
 import pandas as pd
+import requests
 import streamlit as st
-from PIL import Image
 
-# Odds API Key from Streamlit Secrets
-API_KEY = st.secrets["ODDS_API_KEY"]
-
-try:
-    from rapidocr_onnxruntime import RapidOCR
-    OCR_AVAILABLE = True
-except Exception:
-    OCR_AVAILABLE = False
 
 MAX_SCORE = 116
 
@@ -25,15 +15,12 @@ st.set_page_config(
 
 st.title("🏇 Golden Bullet")
 
-st.success(f"Odds API Connected: {API_KEY[:6]}...")
-
-st.write(
-    "Upload meeting screenshots, build race lists, "
-    "paste horse CSVs, score races, and prepare for live Odds API integration."
-)
-
-st.title("🏇 Golden Bullet")
-st.write("Upload meeting screenshots, build race lists, paste horse CSVs, and score races.")
+try:
+    API_KEY = st.secrets["ODDS_API_KEY"]
+    st.success(f"Odds API Connected: {API_KEY[:6]}...")
+except Exception:
+    API_KEY = None
+    st.error("Odds API key not found. Add ODDS_API_KEY to Streamlit Secrets.")
 
 
 def get_rating_percentage(score):
@@ -70,11 +57,11 @@ def safe_float(value):
 def safe_int(value):
     value = str(value).strip().lower()
 
-    if value in ["", "x", "-"]:
+    if value in ["", "x", "-", "nan"]:
         return 0
 
     try:
-        return int(value)
+        return int(float(value))
     except Exception:
         return 0
 
@@ -204,22 +191,22 @@ def calculate_scores(df):
     scored_rows = []
 
     for _, row in df.iterrows():
-        sky_rating_score = get_sky_rating_score(safe_int(row["sky_rating"]))
+        sky_rating_score = get_sky_rating_score(safe_int(row.get("sky_rating", 0)))
 
         form_score = get_form_score(
-            safe_int(row["last_start_position"]),
-            safe_int(row["second_last_position"]),
-            safe_int(row["third_last_position"])
+            safe_int(row.get("last_start_position", 0)),
+            safe_int(row.get("second_last_position", 0)),
+            safe_int(row.get("third_last_position", 0))
         )
 
-        distance_score = get_distance_score(row["distance_range"])
-        track_score = get_track_score(row["track_condition"])
-        barrier_score = get_barrier_score(safe_int(row["barrier"]))
+        distance_score = get_distance_score(row.get("distance_range", ""))
+        track_score = get_track_score(row.get("track_condition", ""))
+        barrier_score = get_barrier_score(safe_int(row.get("barrier", 0)))
         jockey_score = 2
         trainer_score = 2
-        grade_score = get_grade_score(row["grade"])
-        weight_score = get_weight_score(safe_float(row["weight_carried"]))
-        market_score = get_market_score(safe_float(row["odds"]))
+        grade_score = get_grade_score(row.get("grade", ""))
+        weight_score = get_weight_score(safe_float(row.get("weight_carried", 0)))
+        market_score = get_market_score(safe_float(row.get("odds", 0)))
 
         total_score = (
             sky_rating_score
@@ -275,260 +262,347 @@ def get_stake(score, bankroll):
     return f"${stake:.2f} win"
 
 
-def run_ocr(uploaded_files):
-    if not OCR_AVAILABLE:
-        return "OCR is not available. Check requirements.txt and Streamlit logs."
+def fetch_sports():
+    url = "https://api.the-odds-api.com/v4/sports"
+    response = requests.get(
+        url,
+        params={
+            "apiKey": API_KEY,
+            "all": "true"
+        },
+        timeout=20
+    )
 
-    engine = RapidOCR()
-    all_text = []
+    if response.status_code != 200:
+        raise Exception(response.text)
 
-    for uploaded_file in uploaded_files:
-        image = Image.open(uploaded_file)
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
-            image.save(temp_file.name)
-            result, _ = engine(temp_file.name)
-
-        all_text.append(f"--- {uploaded_file.name} ---")
-
-        if result:
-            for line in result:
-                all_text.append(line[1])
-
-        all_text.append("")
-
-    return "\n".join(all_text)
+    return response.json()
 
 
-def normalise_track_name(line):
-    cleaned = line.lower().replace(" ", "")
+def fetch_odds(sport_key, market):
+    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
 
-    track_map = {
-        "sandown": "Sandown",
-        "warwickfarm": "Warwick Farm",
-        "doomben": "Doomben",
-        "moree": "Moree",
-        "flemington": "Flemington",
-        "randwick": "Randwick",
-        "rosehill": "Rosehill",
-        "caulfield": "Caulfield",
-        "morphettville": "Morphettville",
-        "eaglefarm": "Eagle Farm",
-        "canterbury": "Canterbury",
-        "geelong": "Geelong",
-        "ballarat": "Ballarat",
-        "bendigo": "Bendigo",
-        "belmont": "Belmont",
-        "ascot": "Ascot",
-        "murraybridge": "Murray Bridge",
-        "gawler": "Gawler"
-    }
+    response = requests.get(
+        url,
+        params={
+            "apiKey": API_KEY,
+            "regions": "au",
+            "markets": market,
+            "oddsFormat": "decimal",
+            "dateFormat": "iso"
+        },
+        timeout=20
+    )
 
-    for key, track_name in track_map.items():
-        if key in cleaned:
-            return track_name
+    if response.status_code != 200:
+        raise Exception(response.text)
 
-    return None
+    return response.json(), response.headers
 
 
-def parse_meetings(text):
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    meetings = {}
-    current_track = None
+def find_racing_sports(sports):
+    racing_sports = []
 
-    ignore_words = [
-        "fo",
-        "sky",
-        "sky1",
-        "australia",
-        "fixed",
-        "odds",
-        "racing"
+    for sport in sports:
+        combined_text = (
+            str(sport.get("key", "")) + " " +
+            str(sport.get("group", "")) + " " +
+            str(sport.get("title", "")) + " " +
+            str(sport.get("description", ""))
+        ).lower()
+
+        if "horse" in combined_text or "racing" in combined_text:
+            racing_sports.append(sport)
+
+    return racing_sports
+
+
+def odds_events_to_table(events):
+    rows = []
+
+    for event in events:
+        event_name = event.get("home_team") or event.get("title") or event.get("id")
+
+        for bookmaker in event.get("bookmakers", []):
+            bookmaker_name = bookmaker.get("title", bookmaker.get("key", "Unknown"))
+
+            for market in bookmaker.get("markets", []):
+                market_key = market.get("key", "")
+
+                for outcome in market.get("outcomes", []):
+                    rows.append({
+                        "event_id": event.get("id"),
+                        "event": event_name,
+                        "commence_time": event.get("commence_time"),
+                        "bookmaker": bookmaker_name,
+                        "market": market_key,
+                        "runner": outcome.get("name"),
+                        "odds": outcome.get("price")
+                    })
+
+    return pd.DataFrame(rows)
+
+
+def odds_table_to_csv(df, race_number):
+    csv_rows = []
+
+    for index, row in df.iterrows():
+        csv_rows.append({
+            "horse_number": index + 1,
+            "horse_name": row["runner"],
+            "race_number": race_number,
+            "grade": "API",
+            "barrier": 0,
+            "jockey": "Unknown",
+            "trainer": "Unknown",
+            "odds": row["odds"],
+            "last_start_position": 0,
+            "second_last_position": 0,
+            "third_last_position": 0,
+            "distance_range": "Unknown",
+            "weight_carried": 0,
+            "track_condition": "Unknown",
+            "weather": "Unknown",
+            "sky_rating": 0
+        })
+
+    return pd.DataFrame(csv_rows).to_csv(index=False)
+
+
+def display_scored_race(scored_df, bankroll):
+    st.success("Race scored successfully!")
+
+    st.subheader("Best Tip")
+
+    best = scored_df.sort_values("score", ascending=False).iloc[0]
+
+    st.info(
+        f"#{best['horse_number']} {best['horse_name']} | "
+        f"Score {best['score']}/{MAX_SCORE} | "
+        f"Rating {best['rating']}% | "
+        f"Confidence {best['confidence']} | "
+        f"Stake {get_stake(best['score'], bankroll)}"
+    )
+
+    st.subheader("Top 3 Chances")
+
+    top3 = scored_df.sort_values("score", ascending=False).head(3)
+
+    st.dataframe(
+        top3[[
+            "horse_number",
+            "horse_name",
+            "odds",
+            "score",
+            "rating",
+            "confidence"
+        ]],
+        use_container_width=True
+    )
+
+    st.subheader("Golden Bullet")
+
+    st.success(
+        f"#{best['horse_number']} {best['horse_name']} | "
+        f"Odds ${best['odds']} | "
+        f"Score {best['score']}/{MAX_SCORE} | "
+        f"Rating {best['rating']}% | "
+        f"Confidence {best['confidence']} | "
+        f"Stake {get_stake(best['score'], bankroll)}"
+    )
+
+    st.write("Score Breakdown")
+    st.json({
+        "Sky Rating": f"{best['sky_rating_score']}/15",
+        "Form": f"{best['form_score']}/35",
+        "Distance": f"{best['distance_score']}/10",
+        "Track": f"{best['track_score']}/8",
+        "Barrier": f"{best['barrier_score']}/8",
+        "Jockey": f"{best['jockey_score']}/2",
+        "Trainer": f"{best['trainer_score']}/2",
+        "Grade": f"{best['grade_score']}/6",
+        "Weight": f"{best['weight_score']}/10",
+        "Market": f"{best['market_score']}/20"
+    })
+
+    st.subheader("Roughie Chance")
+
+    roughies = scored_df[
+        (scored_df["odds"].astype(float) >= 15)
+        & (scored_df["score"].astype(float) >= 65)
     ]
 
-    for line in lines:
-        track_name = normalise_track_name(line)
+    if len(roughies) > 0:
+        roughie = roughies.sort_values("score", ascending=False).iloc[0]
 
-        if track_name:
-            current_track = track_name
-
-            if current_track not in meetings:
-                meetings[current_track] = []
-
-            continue
-
-        if current_track is None:
-            continue
-
-        lower_line = line.lower().strip()
-
-        if lower_line in ignore_words:
-            continue
-
-        times = re.findall(r"\b\d{1,2}:\d{2}\b", line)
-
-        for time in times:
-            if time not in meetings[current_track]:
-                meetings[current_track].append(time)
-
-    return meetings
+        st.warning(
+            f"#{roughie['horse_number']} {roughie['horse_name']} | "
+            f"Odds ${roughie['odds']} | "
+            f"Score {roughie['score']}/{MAX_SCORE} | "
+            f"Rating {roughie['rating']}% | "
+            f"Stake ${bankroll * 0.01:.2f} each-way"
+        )
+    else:
+        st.write("No Roughie Chance found.")
 
 
-example_csv = """horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating
+st.write(
+    "Use the Odds API test section first. If horse racing appears, load odds, "
+    "turn them into CSV, then add missing form/barrier/weight data if needed."
+)
+
+bankroll = st.number_input("Bankroll", min_value=1.0, value=150.0, step=1.0)
+
+tab1, tab2 = st.tabs(["Live Odds API", "Manual CSV Scorer"])
+
+with tab1:
+    st.subheader("1. Find Racing Sports From The Odds API")
+
+    if API_KEY is None:
+        st.error("Add ODDS_API_KEY in Streamlit Secrets first.")
+    else:
+        if st.button("Load Available Sports"):
+            try:
+                sports = fetch_sports()
+                racing_sports = find_racing_sports(sports)
+
+                st.session_state["sports"] = sports
+                st.session_state["racing_sports"] = racing_sports
+
+                st.success(f"Loaded {len(sports)} sports.")
+                st.write(f"Found {len(racing_sports)} racing-related sports.")
+
+            except Exception as error:
+                st.error("Could not load sports.")
+                st.write(error)
+
+    if "racing_sports" in st.session_state:
+        racing_sports = st.session_state["racing_sports"]
+
+        if len(racing_sports) == 0:
+            st.warning("No horse racing sports found on your current Odds API plan/feed.")
+            st.write("All available sports:")
+            st.dataframe(pd.DataFrame(st.session_state["sports"]), use_container_width=True)
+        else:
+            sport_options = {
+                f"{sport.get('title')} | {sport.get('key')}": sport.get("key")
+                for sport in racing_sports
+            }
+
+            selected_sport_label = st.selectbox(
+                "Select racing sport",
+                list(sport_options.keys())
+            )
+
+            selected_sport_key = sport_options[selected_sport_label]
+
+            market = st.selectbox(
+                "Market",
+                ["h2h", "outrights"],
+                index=0
+            )
+
+            if st.button("Load Odds For Selected Sport"):
+                try:
+                    events, headers = fetch_odds(selected_sport_key, market)
+
+                    st.session_state["odds_events"] = events
+                    st.session_state["odds_headers"] = dict(headers)
+
+                    st.success(f"Loaded {len(events)} events.")
+                    st.write(
+                        "Requests remaining:",
+                        headers.get("x-requests-remaining", "Unknown")
+                    )
+
+                except Exception as error:
+                    st.error("Could not load odds.")
+                    st.write(error)
+
+    if "odds_events" in st.session_state:
+        st.subheader("2. Odds Results")
+
+        events = st.session_state["odds_events"]
+
+        if len(events) == 0:
+            st.warning("No odds returned for this sport/market.")
+        else:
+            odds_df = odds_events_to_table(events)
+
+            if len(odds_df) == 0:
+                st.warning("Events loaded, but no bookmaker outcomes were found.")
+                st.json(events[0])
+            else:
+                st.dataframe(odds_df, use_container_width=True)
+
+                events_list = sorted(odds_df["event"].dropna().unique())
+
+                selected_event = st.selectbox(
+                    "Select event/race",
+                    events_list
+                )
+
+                event_df = odds_df[odds_df["event"] == selected_event]
+
+                bookmakers = sorted(event_df["bookmaker"].dropna().unique())
+
+                selected_bookmaker = st.selectbox(
+                    "Select bookmaker",
+                    bookmakers
+                )
+
+                bookmaker_df = event_df[event_df["bookmaker"] == selected_bookmaker]
+
+                race_number = st.number_input(
+                    "Race number for CSV",
+                    min_value=1,
+                    max_value=20,
+                    value=1,
+                    key="api_race_number"
+                )
+
+                generated_csv = odds_table_to_csv(bookmaker_df, race_number)
+
+                st.subheader("3. Generated CSV From Odds API")
+                st.write("This includes names and odds. Add form/barrier/weight/Sky Rating later if you have them.")
+
+                api_csv = st.text_area(
+                    "Generated CSV",
+                    value=generated_csv,
+                    height=300
+                )
+
+                if st.button("Score API CSV"):
+                    try:
+                        df = pd.read_csv(StringIO(api_csv))
+                        scored_df = calculate_scores(df)
+                        display_scored_race(scored_df, bankroll)
+                    except Exception as error:
+                        st.error("Could not score API CSV.")
+                        st.write(error)
+
+
+with tab2:
+    st.subheader("Manual CSV Scorer")
+
+    example_csv = """horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating
 13,Zavega,6,BM58,1,Ben Looker,Alyssa and Troy Sweeney,3.50,1,3,1,800m-1000m,57,Soft 7,Fine,100
 3,Irish Jig,6,BM58,8,Mikayla Weir,Scott Singleton,3.20,1,6,4,1200m-1280m,62,Soft 7,Fine,93
 12,Dubalene,6,BM58,5,Luke Rolls,Colt Prosser,8.50,1,2,3,800m-1400m,57.5,Soft 7,Fine,80
 """
 
-
-st.subheader("1. Upload today's meeting screenshot")
-
-meeting_files = st.file_uploader(
-    "Upload screenshot showing tracks and race times",
-    type=["png", "jpg", "jpeg"],
-    accept_multiple_files=True,
-    key="meeting_uploader"
-)
-
-if meeting_files:
-    if st.button("Read Meeting Screenshot"):
-        with st.spinner("Reading meeting screenshot..."):
-            ocr_text = run_ocr(meeting_files)
-            meetings = parse_meetings(ocr_text)
-
-            st.session_state["meeting_ocr_text"] = ocr_text
-            st.session_state["meetings"] = meetings
-
-
-if "meeting_ocr_text" in st.session_state:
-    st.subheader("OCR Text")
-    st.text_area(
-        "Extracted meeting text",
-        value=st.session_state["meeting_ocr_text"],
-        height=200
+    horse_csv = st.text_area(
+        "Paste horse CSV here",
+        value=example_csv,
+        height=300
     )
 
+    if st.button("Score Manual CSV"):
+        try:
+            df = pd.read_csv(StringIO(horse_csv))
+            scored_df = calculate_scores(df)
+            display_scored_race(scored_df, bankroll)
 
-if "meetings" in st.session_state:
-    st.subheader("2. Today's Meetings")
-
-    meetings = st.session_state["meetings"]
-
-    if len(meetings) == 0:
-        st.warning("No meetings found. Add races manually below.")
-    else:
-        for track, times in meetings.items():
-            st.write(f"### {track}")
-
-            if len(times) == 0:
-                st.write("No race times found.")
-            else:
-                race_data = []
-
-                for index, time in enumerate(times, start=1):
-                    race_data.append({
-                        "Race": f"R{index}",
-                        "Time": time,
-                        "Status": "Ready for horse data"
-                    })
-
-                st.dataframe(pd.DataFrame(race_data), use_container_width=True)
-
-
-st.subheader("3. Add Horse Data For A Race")
-
-track_name = st.text_input("Track name", value="Sandown")
-race_number = st.number_input("Race number", min_value=1, max_value=20, value=1)
-race_time = st.text_input("Race time", value="11:55")
-bankroll = st.number_input("Bankroll", min_value=1.0, value=150.0, step=1.0)
-
-horse_csv = st.text_area(
-    "Paste horse CSV here",
-    value=example_csv,
-    height=300
-)
-
-
-if st.button("Score Race"):
-    try:
-        df = pd.read_csv(StringIO(horse_csv))
-        scored_df = calculate_scores(df)
-
-        st.success(f"Race scored: {track_name} Race {race_number} at {race_time}")
-
-        st.subheader("Best Tip")
-
-        best = scored_df.sort_values("score", ascending=False).iloc[0]
-
-        st.info(
-            f"#{best['horse_number']} {best['horse_name']} | "
-            f"Score {best['score']}/{MAX_SCORE} | "
-            f"Rating {best['rating']}% | "
-            f"Confidence {best['confidence']} | "
-            f"Stake {get_stake(best['score'], bankroll)}"
-        )
-
-        st.subheader("Top 3 Chances")
-
-        top3 = scored_df.sort_values("score", ascending=False).head(3)
-
-        st.dataframe(
-            top3[[
-                "horse_number",
-                "horse_name",
-                "odds",
-                "score",
-                "rating",
-                "confidence"
-            ]],
-            use_container_width=True
-        )
-
-        st.subheader("Golden Bullet")
-
-        st.success(
-            f"#{best['horse_number']} {best['horse_name']} | "
-            f"Odds ${best['odds']} | "
-            f"Score {best['score']}/{MAX_SCORE} | "
-            f"Rating {best['rating']}% | "
-            f"Confidence {best['confidence']} | "
-            f"Stake {get_stake(best['score'], bankroll)}"
-        )
-
-        st.write("Score Breakdown")
-        st.json({
-            "Sky Rating": f"{best['sky_rating_score']}/15",
-            "Form": f"{best['form_score']}/35",
-            "Distance": f"{best['distance_score']}/10",
-            "Track": f"{best['track_score']}/8",
-            "Barrier": f"{best['barrier_score']}/8",
-            "Jockey": f"{best['jockey_score']}/2",
-            "Trainer": f"{best['trainer_score']}/2",
-            "Grade": f"{best['grade_score']}/6",
-            "Weight": f"{best['weight_score']}/10",
-            "Market": f"{best['market_score']}/20"
-        })
-
-        st.subheader("Roughie Chance")
-
-        roughies = scored_df[
-            (scored_df["odds"].astype(float) >= 15)
-            & (scored_df["score"].astype(float) >= 65)
-        ]
-
-        if len(roughies) > 0:
-            roughie = roughies.sort_values("score", ascending=False).iloc[0]
-
-            st.warning(
-                f"#{roughie['horse_number']} {roughie['horse_name']} | "
-                f"Odds ${roughie['odds']} | "
-                f"Score {roughie['score']}/{MAX_SCORE} | "
-                f"Rating {roughie['rating']}% | "
-                f"Stake ${bankroll * 0.01:.2f} each-way"
-            )
-        else:
-            st.write("No Roughie Chance found.")
-
-    except Exception as error:
-        st.error("Something went wrong while scoring.")
-        st.write(error)
+        except Exception as error:
+            st.error("Something went wrong while scoring.")
+            st.write(error)
