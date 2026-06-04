@@ -6,12 +6,14 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
+# Odds API Key from Streamlit Secrets
+API_KEY = st.secrets["ODDS_API_KEY"]
+
 try:
     from rapidocr_onnxruntime import RapidOCR
     OCR_AVAILABLE = True
 except Exception:
     OCR_AVAILABLE = False
-
 
 MAX_SCORE = 116
 
@@ -20,6 +22,14 @@ st.set_page_config(
     page_icon="🏇",
     layout="wide"
 )
+
+st.title("🏇 Golden Bullet")
+
+st.success(f"Odds API Connected: {API_KEY[:6]}...")
+
+st.write(
+    "Upload meeting screenshots, build race lists, "
+    "paste horse CSVs, score races, and prepare for live Odds API integration."
 
 st.title("🏇 Golden Bullet")
 st.write("Upload meeting screenshots, build race lists, paste horse CSVs, and score races.")
