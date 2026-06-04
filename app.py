@@ -530,6 +530,39 @@ def update_results_for_race(race_id, first, second, third):
     for index, row in race_history.iterrows():
         if row["race_id"] == race_id:
             horse_number = safe_int(row["horse_number"])
+            finish_position = placing_map.get(horse_number, 99)
+            race_history.loc[index, "finish_position"] = str(finish_position)
+
+    save_race_history(race_history)
+
+    selection_history = load_selection_history()
+
+    selection_history["finish_position"] = selection_history["finish_position"].astype(str)
+    selection_history["result"] = selection_history["result"].astype(str)
+    selection_history["profit_loss"] = selection_history["profit_loss"].astype(float)
+
+    for index, row in selection_history.iterrows():
+        if row["race_id"] == race_id:
+            horse_number = safe_int(row["horse_number"])
+            finish_position = placing_map.get(horse_number, 99)
+
+            profit_loss, result = calculate_profit_loss(
+                row["stake"],
+                row["odds"],
+                finish_position
+            )
+
+            selection_history.loc[index, "finish_position"] = str(finish_position)
+            selection_history.loc[index, "result"] = result
+            selection_history.loc[index, "profit_loss"] = float(profit_loss)
+
+    save_selection_history(selection_history)
+
+    race_history = load_race_history()
+
+    for index, row in race_history.iterrows():
+        if row["race_id"] == race_id:
+            horse_number = safe_int(row["horse_number"])
             race_history.loc[index, "finish_position"] = placing_map.get(horse_number, 99)
 
     save_race_history(race_history)
