@@ -6,7 +6,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
-MAX_SCORE = 116
+MAX_SCORE = 131
 RACE_HISTORY_FILE = "race_history.csv"
 SELECTION_HISTORY_FILE = "selection_history.csv"
 
@@ -22,19 +22,15 @@ except Exception:
 
 
 def safe_float(value):
-    value = str(value).replace("$", "").replace("kg", "").strip()
     try:
-        return float(value)
+        return float(str(value).replace("$", "").replace("kg", "").strip())
     except Exception:
         return 0.0
 
 
 def safe_int(value):
-    value = str(value).strip().lower()
-    if value in ["", "x", "-", "nan", "none"]:
-        return 0
     try:
-        return int(float(value))
+        return int(float(str(value).strip()))
     except Exception:
         return 0
 
@@ -48,14 +44,17 @@ def get_confidence(score):
 
     if rating >= 85:
         return "Elite"
-    elif rating >= 75:
+
+    if rating >= 75:
         return "Very High"
-    elif rating >= 65:
+
+    if rating >= 65:
         return "High"
-    elif rating >= 55:
+
+    if rating >= 55:
         return "Medium"
-    else:
-        return "Low"
+
+    return "Low"
 
 
 def get_grade_score(grade):
@@ -63,85 +62,145 @@ def get_grade_score(grade):
 
     if "BM58" in grade:
         return 6
-    elif "BM64" in grade:
+
+    if "BM64" in grade:
         return 5
-    elif "BM70" in grade:
+
+    if "BM70" in grade:
         return 4
-    elif "MAIDEN" in grade or "MDN" in grade:
+
+    if "MAIDEN" in grade or "MDN" in grade:
         return 3
-    else:
-        return 3
+
+    return 3
 
 
 def get_barrier_score(barrier):
+    barrier = safe_int(barrier)
+
     if 1 <= barrier <= 4:
         return 8
-    elif 5 <= barrier <= 8:
+
+    if 5 <= barrier <= 8:
         return 5
-    else:
-        return 2
+
+    return 2
 
 
 def get_form_score(last_start, second_last, third_last):
     score = 0
-    recent_runs = [(last_start, 20), (second_last, 10), (third_last, 5)]
+
+    recent_runs = [
+        (last_start, 20),
+        (second_last, 10),
+        (third_last, 5)
+    ]
 
     for position, max_points in recent_runs:
+        position = safe_int(position)
+
         if position == 1:
             score += max_points
+
         elif position == 2:
             score += round(max_points * 0.8)
+
         elif position == 3:
             score += round(max_points * 0.6)
+
         elif 4 <= position <= 5:
             score += round(max_points * 0.3)
 
     return min(score, 35)
 
 
+def get_class_form_score(form_score, class_movement):
+    class_movement = str(class_movement).upper().strip()
+
+    good_form = form_score >= 20
+
+    if good_form and class_movement == "W":
+        return 15
+
+    if good_form and class_movement == "E":
+        return 7.5
+
+    if good_form and class_movement == "S":
+        return 5
+
+    if not good_form and class_movement == "W":
+        return 5
+
+    if not good_form and class_movement == "E":
+        return 3
+
+    if not good_form and class_movement == "S":
+        return 0
+
+    return 3
+
+
 def get_weight_score(weight):
+    weight = safe_float(weight)
+
     if weight <= 0:
         return 0
-    elif weight <= 55:
+
+    if weight <= 55:
         return 10
-    elif weight <= 57:
+
+    if weight <= 57:
         return 8
-    elif weight <= 59:
+
+    if weight <= 59:
         return 5
-    else:
-        return 2
+
+    return 2
 
 
 def get_market_score(odds):
+    odds = safe_float(odds)
+
     if odds <= 0:
         return 0
-    elif odds <= 3:
+
+    if odds <= 3:
         return 20
-    elif odds <= 5:
+
+    if odds <= 5:
         return 15
-    elif odds <= 10:
+
+    if odds <= 10:
         return 10
-    elif odds <= 20:
+
+    if odds <= 20:
         return 5
-    elif odds <= 40:
+
+    if odds <= 40:
         return 2
-    else:
-        return 0
+
+    return 0
 
 
 def get_sky_rating_score(rating):
+    rating = safe_int(rating)
+
     if rating >= 95:
         return 15
-    elif rating >= 90:
+
+    if rating >= 90:
         return 12
-    elif rating >= 85:
+
+    if rating >= 85:
         return 10
-    elif rating >= 80:
+
+    if rating >= 80:
         return 7
-    elif rating >= 70:
+
+    if rating >= 70:
         return 4
-    else:
-        return 0
+
+    return 0
 
 
 def get_distance_score(distance):
@@ -149,14 +208,17 @@ def get_distance_score(distance):
 
     if "1400" in distance:
         return 10
-    elif "1300" in distance:
+
+    if "1300" in distance:
         return 8
-    elif "1200" in distance:
+
+    if "1200" in distance:
         return 6
-    elif "1000" in distance or "1100" in distance:
+
+    if "1000" in distance or "1100" in distance:
         return 5
-    else:
-        return 4
+
+    return 4
 
 
 def get_track_score(track):
@@ -164,38 +226,46 @@ def get_track_score(track):
 
     if "soft" in track:
         return 8
-    elif "good" in track:
+
+    if "good" in track:
         return 6
-    elif "heavy" in track:
+
+    if "heavy" in track:
         return 5
-    else:
-        return 4
+
+    return 4
 
 
 def calculate_scores(df):
     scored_rows = []
 
     for _, row in df.iterrows():
-        sky_rating_score = get_sky_rating_score(safe_int(row.get("sky_rating", 0)))
+        sky_rating_score = get_sky_rating_score(row.get("sky_rating", 0))
 
         form_score = get_form_score(
-            safe_int(row.get("last_start_position", 0)),
-            safe_int(row.get("second_last_position", 0)),
-            safe_int(row.get("third_last_position", 0))
+            row.get("last_start_position", 0),
+            row.get("second_last_position", 0),
+            row.get("third_last_position", 0)
+        )
+
+        class_form_score = get_class_form_score(
+            form_score,
+            row.get("class_movement", "E")
         )
 
         distance_score = get_distance_score(row.get("distance_range", ""))
         track_score = get_track_score(row.get("track_condition", ""))
-        barrier_score = get_barrier_score(safe_int(row.get("barrier", 0)))
+        barrier_score = get_barrier_score(row.get("barrier", 0))
         jockey_score = 2
         trainer_score = 2
         grade_score = get_grade_score(row.get("grade", ""))
-        weight_score = get_weight_score(safe_float(row.get("weight_carried", 0)))
-        market_score = get_market_score(safe_float(row.get("odds", 0)))
+        weight_score = get_weight_score(row.get("weight_carried", 0))
+        market_score = get_market_score(row.get("odds", 0))
 
         total_score = (
             sky_rating_score
             + form_score
+            + class_form_score
             + distance_score
             + track_score
             + barrier_score
@@ -212,6 +282,7 @@ def calculate_scores(df):
         row_data["confidence"] = get_confidence(total_score)
         row_data["sky_rating_score"] = sky_rating_score
         row_data["form_score"] = form_score
+        row_data["class_form_score"] = class_form_score
         row_data["distance_score"] = distance_score
         row_data["track_score"] = track_score
         row_data["barrier_score"] = barrier_score
@@ -231,12 +302,16 @@ def get_stake(score, bankroll):
 
     if rating >= 85:
         stake = bankroll * 0.05
+
     elif rating >= 75:
         stake = bankroll * 0.04
+
     elif rating >= 65:
         stake = bankroll * 0.03
+
     elif rating >= 55:
         stake = bankroll * 0.02
+
     else:
         stake = 0
 
@@ -245,14 +320,16 @@ def get_stake(score, bankroll):
 
 def call_formfav_form(race_date, track, race):
     url = "https://api.formfav.com/v1/form"
+
     headers = {
         "X-API-Key": FORMFAV_API_KEY,
         "Accept": "application/json"
     }
+
     params = {
-        "date": race_date,
+        "date": str(race_date),
         "track": track,
-        "race": race
+        "race": int(race)
     }
 
     return requests.get(url, headers=headers, params=params, timeout=30)
@@ -271,6 +348,7 @@ def find_runners(data):
     for value in data.values():
         if isinstance(value, dict):
             runners = find_runners(value)
+
             if runners:
                 return runners
 
@@ -281,21 +359,23 @@ def get_value(runner, keys, default=""):
     for key in keys:
         if key in runner and runner[key] not in [None, ""]:
             return runner[key]
+
     return default
 
 
 def get_recent_form_positions(form):
-    form = str(form)
-    digits = [int(char) for char in form if char.isdigit()]
+    digits = [int(char) for char in str(form) if char.isdigit()]
 
     if len(digits) >= 3:
         return digits[-1], digits[-2], digits[-3]
-    elif len(digits) == 2:
+
+    if len(digits) == 2:
         return digits[-1], digits[-2], 0
-    elif len(digits) == 1:
+
+    if len(digits) == 1:
         return digits[-1], 0, 0
-    else:
-        return 0, 0, 0
+
+    return 0, 0, 0
 
 
 def get_rating_from_runner(runner):
@@ -316,10 +396,10 @@ def get_rating_from_runner(runner):
 def normalise_formfav_to_df(data, race_number):
     runners = find_runners(data)
 
-    race_distance = data.get("distance", "Unknown")
-    race_condition = data.get("condition", "Unknown")
-    race_weather = data.get("weather", "Unknown")
-    race_class = data.get("raceClass", "API")
+    race_distance = data.get("distance", "Unknown") if isinstance(data, dict) else "Unknown"
+    race_condition = data.get("condition", "Unknown") if isinstance(data, dict) else "Unknown"
+    race_weather = data.get("weather", "Unknown") if isinstance(data, dict) else "Unknown"
+    race_class = data.get("raceClass", "API") if isinstance(data, dict) else "API"
 
     rows = []
 
@@ -349,34 +429,39 @@ def normalise_formfav_to_df(data, race_number):
             "weight_carried": get_value(runner, ["weight"], 0),
             "track_condition": race_condition,
             "weather": race_weather,
-            "sky_rating": get_rating_from_runner(runner)
+            "sky_rating": get_rating_from_runner(runner),
+            "class_movement": "E"
         })
 
     return pd.DataFrame(rows)
 
 
-def apply_odds_to_df(df, odds_text):
+def apply_odds_and_class_to_df(df, odds_text):
     odds_map = {}
+    class_map = {}
 
     for line in odds_text.strip().splitlines():
-        line = line.strip()
+        parts = line.strip().split(",")
 
-        if line == "":
-            continue
+        if len(parts) >= 2:
+            horse_number = safe_int(parts[0])
+            odds = safe_float(parts[1])
+            odds_map[horse_number] = odds
 
-        parts = line.split(",")
+        if len(parts) >= 3:
+            class_movement = str(parts[2]).upper().strip()
 
-        if len(parts) < 2:
-            continue
-
-        horse_number = safe_int(parts[0])
-        odds = safe_float(parts[1])
-        odds_map[horse_number] = odds
+            if class_movement in ["W", "E", "S"]:
+                class_map[horse_number] = class_movement
 
     df = df.copy()
 
     df["odds"] = df["horse_number"].apply(
         lambda horse_number: odds_map.get(safe_int(horse_number), 0)
+    )
+
+    df["class_movement"] = df["horse_number"].apply(
+        lambda horse_number: class_map.get(safe_int(horse_number), "E")
     )
 
     return df
@@ -386,43 +471,98 @@ def build_odds_template(df):
     lines = []
 
     for _, row in df.iterrows():
-        lines.append(f"{row['horse_number']},0")
+        lines.append(f"{row['horse_number']},0,E")
 
     return "\n".join(lines)
 
 
-def load_race_history():
-    if os.path.exists(RACE_HISTORY_FILE):
-        return pd.read_csv(RACE_HISTORY_FILE)
+def ensure_selection_columns(df):
+    columns = [
+        "race_id", "date", "track", "race_number", "pick_type",
+        "horse_number", "horse_name", "odds", "score", "rating",
+        "confidence", "stake", "finish_position", "result", "profit_loss"
+    ]
 
-    return pd.DataFrame(columns=[
+    for column in columns:
+        if column not in df.columns:
+            df[column] = ""
+
+    df = df[columns]
+
+    df["race_id"] = df["race_id"].astype(str)
+    df["date"] = df["date"].astype(str)
+    df["track"] = df["track"].astype(str)
+    df["race_number"] = df["race_number"].astype(str)
+    df["pick_type"] = df["pick_type"].astype(str)
+    df["horse_number"] = df["horse_number"].astype(str)
+    df["horse_name"] = df["horse_name"].astype(str)
+    df["odds"] = df["odds"].apply(safe_float)
+    df["score"] = df["score"].apply(safe_float)
+    df["rating"] = df["rating"].apply(safe_float)
+    df["confidence"] = df["confidence"].astype(str)
+    df["stake"] = df["stake"].apply(safe_float)
+    df["finish_position"] = df["finish_position"].astype(str)
+    df["result"] = df["result"].astype(str)
+    df["profit_loss"] = df["profit_loss"].apply(safe_float)
+
+    return df
+
+
+def ensure_race_columns(df):
+    columns = [
         "race_id", "date", "track", "race_number", "horse_number",
         "horse_name", "odds", "score", "rating", "confidence",
         "finish_position"
-    ])
+    ]
+
+    for column in columns:
+        if column not in df.columns:
+            df[column] = ""
+
+    df = df[columns]
+
+    df["race_id"] = df["race_id"].astype(str)
+    df["date"] = df["date"].astype(str)
+    df["track"] = df["track"].astype(str)
+    df["race_number"] = df["race_number"].astype(str)
+    df["horse_number"] = df["horse_number"].astype(str)
+    df["horse_name"] = df["horse_name"].astype(str)
+    df["odds"] = df["odds"].apply(safe_float)
+    df["score"] = df["score"].apply(safe_float)
+    df["rating"] = df["rating"].apply(safe_float)
+    df["confidence"] = df["confidence"].astype(str)
+    df["finish_position"] = df["finish_position"].astype(str)
+
+    return df
+
+
+def load_race_history():
+    if os.path.exists(RACE_HISTORY_FILE):
+        return ensure_race_columns(pd.read_csv(RACE_HISTORY_FILE, dtype=str))
+
+    return ensure_race_columns(pd.DataFrame())
 
 
 def save_race_history(df):
+    df = ensure_race_columns(df)
     df.to_csv(RACE_HISTORY_FILE, index=False)
 
 
 def load_selection_history():
     if os.path.exists(SELECTION_HISTORY_FILE):
-        return pd.read_csv(SELECTION_HISTORY_FILE)
+        return ensure_selection_columns(pd.read_csv(SELECTION_HISTORY_FILE, dtype=str))
 
-    return pd.DataFrame(columns=[
-        "race_id", "date", "track", "race_number", "pick_type",
-        "horse_number", "horse_name", "odds", "score", "rating",
-        "confidence", "stake", "finish_position", "result", "profit_loss"
-    ])
+    return ensure_selection_columns(pd.DataFrame())
 
 
 def save_selection_history(df):
+    df = ensure_selection_columns(df)
     df.to_csv(SELECTION_HISTORY_FILE, index=False)
 
 
 def build_race_id(race_date, track, race_number):
     clean_track = str(track).strip().lower().replace(" ", "_")
+
     return f"{race_date}_{clean_track}_R{race_number}"
 
 
@@ -438,25 +578,28 @@ def save_full_race_card(race_date, track, race_number, scored_df, bankroll):
         race_rows.append({
             "race_id": race_id,
             "date": str(race_date),
-            "track": track,
-            "race_number": race_number,
-            "horse_number": row["horse_number"],
-            "horse_name": row["horse_name"],
-            "odds": row["odds"],
-            "score": row["score"],
-            "rating": row["rating"],
-            "confidence": row["confidence"],
+            "track": str(track),
+            "race_number": str(race_number),
+            "horse_number": str(row["horse_number"]),
+            "horse_name": str(row["horse_name"]),
+            "odds": safe_float(row["odds"]),
+            "score": safe_float(row["score"]),
+            "rating": safe_float(row["rating"]),
+            "confidence": str(row["confidence"]),
             "finish_position": ""
         })
 
-    race_history = pd.concat([race_history, pd.DataFrame(race_rows)], ignore_index=True)
+    race_history = pd.concat(
+        [race_history, pd.DataFrame(race_rows)],
+        ignore_index=True
+    )
+
     save_race_history(race_history)
 
     selection_history = load_selection_history()
     selection_history = selection_history[selection_history["race_id"] != race_id]
 
     sorted_df = scored_df.sort_values("score", ascending=False)
-
     selections = []
 
     golden = sorted_df.iloc[0]
@@ -480,19 +623,19 @@ def save_full_race_card(race_date, track, race_number, scored_df, bankroll):
         selection_rows.append({
             "race_id": race_id,
             "date": str(race_date),
-            "track": track,
-            "race_number": race_number,
-            "pick_type": pick_type,
-            "horse_number": row["horse_number"],
-            "horse_name": row["horse_name"],
-            "odds": row["odds"],
-            "score": row["score"],
-            "rating": row["rating"],
-            "confidence": row["confidence"],
-            "stake": stake,
+            "track": str(track),
+            "race_number": str(race_number),
+            "pick_type": str(pick_type),
+            "horse_number": str(row["horse_number"]),
+            "horse_name": str(row["horse_name"]),
+            "odds": safe_float(row["odds"]),
+            "score": safe_float(row["score"]),
+            "rating": safe_float(row["rating"]),
+            "confidence": str(row["confidence"]),
+            "stake": safe_float(stake),
             "finish_position": "",
             "result": "Pending",
-            "profit_loss": 0
+            "profit_loss": 0.0
         })
 
     selection_history = pd.concat(
@@ -509,42 +652,38 @@ def calculate_profit_loss(stake, odds, finish_position):
     finish_position = safe_int(finish_position)
 
     if stake <= 0:
-        return 0, "No Bet"
+        return 0.0, "No Bet"
 
     if finish_position == 1:
         profit = (stake * odds) - stake
-        return round(profit, 2), "Win"
 
-    return round(-stake, 2), "Loss"
+        return round(float(profit), 2), "Win"
+
+    return round(float(-stake), 2), "Loss"
 
 
 def update_results_for_race(race_id, first, second, third):
     placing_map = {
-        safe_int(first): 1,
-        safe_int(second): 2,
-        safe_int(third): 3
+        safe_int(first): "1",
+        safe_int(second): "2",
+        safe_int(third): "3"
     }
 
     race_history = load_race_history()
 
     for index, row in race_history.iterrows():
-        if row["race_id"] == race_id:
+        if str(row["race_id"]) == str(race_id):
             horse_number = safe_int(row["horse_number"])
-            finish_position = placing_map.get(horse_number, 99)
-            race_history.loc[index, "finish_position"] = str(finish_position)
+            race_history.at[index, "finish_position"] = placing_map.get(horse_number, "99")
 
     save_race_history(race_history)
 
     selection_history = load_selection_history()
 
-    selection_history["finish_position"] = selection_history["finish_position"].astype(str)
-    selection_history["result"] = selection_history["result"].astype(str)
-    selection_history["profit_loss"] = selection_history["profit_loss"].astype(float)
-
     for index, row in selection_history.iterrows():
-        if row["race_id"] == race_id:
+        if str(row["race_id"]) == str(race_id):
             horse_number = safe_int(row["horse_number"])
-            finish_position = placing_map.get(horse_number, 99)
+            finish_position = placing_map.get(horse_number, "99")
 
             profit_loss, result = calculate_profit_loss(
                 row["stake"],
@@ -552,37 +691,9 @@ def update_results_for_race(race_id, first, second, third):
                 finish_position
             )
 
-            selection_history.loc[index, "finish_position"] = str(finish_position)
-            selection_history.loc[index, "result"] = result
-            selection_history.loc[index, "profit_loss"] = float(profit_loss)
-
-    save_selection_history(selection_history)
-
-    race_history = load_race_history()
-
-    for index, row in race_history.iterrows():
-        if row["race_id"] == race_id:
-            horse_number = safe_int(row["horse_number"])
-            race_history.loc[index, "finish_position"] = placing_map.get(horse_number, 99)
-
-    save_race_history(race_history)
-
-    selection_history = load_selection_history()
-
-    for index, row in selection_history.iterrows():
-        if row["race_id"] == race_id:
-            horse_number = safe_int(row["horse_number"])
-            finish_position = placing_map.get(horse_number, 99)
-
-            profit_loss, result = calculate_profit_loss(
-                row["stake"],
-                row["odds"],
-                finish_position
-            )
-
-            selection_history.loc[index, "finish_position"] = finish_position
-            selection_history.loc[index, "result"] = result
-            selection_history.loc[index, "profit_loss"] = profit_loss
+            selection_history.at[index, "finish_position"] = str(finish_position)
+            selection_history.at[index, "result"] = str(result)
+            selection_history.at[index, "profit_loss"] = float(profit_loss)
 
     save_selection_history(selection_history)
 
@@ -590,6 +701,7 @@ def update_results_for_race(race_id, first, second, third):
 def display_scored_race(scored_df, bankroll, race_date, track, race_number):
     if scored_df.empty:
         st.warning("No runners found.")
+
         return
 
     save_full_race_card(race_date, track, race_number, scored_df, bankroll)
@@ -615,7 +727,13 @@ def display_scored_race(scored_df, bankroll, race_date, track, race_number):
 
     st.dataframe(
         sorted_df.head(3)[[
-            "horse_number", "horse_name", "odds", "score", "rating", "confidence"
+            "horse_number",
+            "horse_name",
+            "odds",
+            "class_movement",
+            "score",
+            "rating",
+            "confidence"
         ]],
         use_container_width=True
     )
@@ -625,6 +743,7 @@ def display_scored_race(scored_df, bankroll, race_date, track, race_number):
     st.json({
         "Sky Rating": f"{best['sky_rating_score']}/15",
         "Form": f"{best['form_score']}/35",
+        "Class + Form": f"{best['class_form_score']}/15",
         "Distance": f"{best['distance_score']}/10",
         "Track": f"{best['track_score']}/8",
         "Barrier": f"{best['barrier_score']}/8",
@@ -653,6 +772,7 @@ def display_scored_race(scored_df, bankroll, race_date, track, race_number):
             f"Rating {roughie['rating']}% | "
             f"Stake ${roughie_stake:.2f} each-way"
         )
+
     else:
         st.write("No Roughie Chance found.")
 
@@ -663,18 +783,18 @@ def show_results_tracker():
 
     if selection_history.empty:
         st.info("No saved races yet.")
+
         return
 
     completed = selection_history[selection_history["result"] != "Pending"]
 
     total_selections = len(selection_history)
     total_completed = len(completed)
-
     wins = len(completed[completed["result"] == "Win"])
-    places = len(completed[completed["finish_position"].astype(str).isin(["1", "2", "3"])])
+    places = len(completed[completed["finish_position"].isin(["1", "2", "3"])])
 
-    total_staked = completed["stake"].astype(float).sum() if total_completed > 0 else 0
-    profit_loss = completed["profit_loss"].astype(float).sum() if total_completed > 0 else 0
+    total_staked = completed["stake"].sum() if total_completed > 0 else 0
+    profit_loss = completed["profit_loss"].sum() if total_completed > 0 else 0
 
     win_rate = (wins / total_completed * 100) if total_completed > 0 else 0
     place_rate = (places / total_completed * 100) if total_completed > 0 else 0
@@ -693,10 +813,16 @@ def show_results_tracker():
 
     st.subheader("Enter Race Result")
 
-    race_options_df = race_history[["race_id", "date", "track", "race_number"]].drop_duplicates()
+    race_options_df = race_history[[
+        "race_id",
+        "date",
+        "track",
+        "race_number"
+    ]].drop_duplicates()
 
     if race_options_df.empty:
         st.info("No races saved yet.")
+
     else:
         options = {}
 
@@ -713,7 +839,7 @@ def show_results_tracker():
 
         if st.button("Save Race Result"):
             update_results_for_race(selected_race_id, first, second, third)
-            st.success("Race result saved.")
+            st.success("Race result saved. Refresh the app to update stats.")
 
     st.subheader("Selection History")
     st.dataframe(selection_history, use_container_width=True)
@@ -722,7 +848,7 @@ def show_results_tracker():
     st.dataframe(race_history, use_container_width=True)
 
 
-st.write("Load runners from FormFav, paste odds, score races, and track results.")
+st.write("Load runners from FormFav, paste odds and class movement, score races, and track results.")
 
 bankroll = st.number_input("Bankroll", min_value=1.0, value=150.0, step=1.0)
 
@@ -737,6 +863,7 @@ with tab1:
 
     if FORMFAV_API_KEY is None:
         st.error("Add FORMFAV_API_KEY to Streamlit Secrets first.")
+
     else:
         race_date = st.date_input("Race date", value=date.today())
         track = st.text_input("Track", value="Geelong")
@@ -744,22 +871,19 @@ with tab1:
 
         if st.button("Load FormFav Runners"):
             try:
-                response = call_formfav_form(
-                    race_date=str(race_date),
-                    track=track,
-                    race=int(race)
-                )
-
+                response = call_formfav_form(race_date, track, race)
                 data = response.json()
 
                 if response.status_code != 200:
                     st.error("FormFav returned an error.")
                     st.json(data)
+
                 else:
-                    df = normalise_formfav_to_df(data=data, race_number=int(race))
+                    df = normalise_formfav_to_df(data, int(race))
 
                     if df.empty:
                         st.warning("No runners found.")
+
                     else:
                         st.session_state["formfav_df"] = df
                         st.session_state["odds_template"] = build_odds_template(df)
@@ -773,33 +897,33 @@ with tab1:
         st.subheader("Loaded Runners")
 
         st.dataframe(
-            st.session_state["formfav_df"][[
-                "horse_number", "horse_name", "barrier", "jockey",
-                "trainer", "weight_carried", "last_start_position",
-                "second_last_position", "third_last_position", "sky_rating"
-            ]],
+            st.session_state["formfav_df"],
             use_container_width=True
         )
 
-        st.subheader("Paste Sportsbet/TAB Odds")
-        st.write("Format: horse number, odds")
-        st.code("1,8.50\n2,4.20\n3,12.00")
+        st.subheader("Paste Sportsbet/TAB Odds + Class Movement")
+
+        st.write("Format: horse number, odds, class movement")
+        st.write("Class movement: W = weaker, E = equal, S = stronger")
+
+        st.code(
+            "1,8.50,W\n"
+            "2,4.20,E\n"
+            "3,12.00,S"
+        )
 
         odds_text = st.text_area(
-            "Odds",
+            "Odds and Class Movement",
             value=st.session_state.get("odds_template", ""),
             height=250
         )
 
         if st.button("Apply Odds And Score"):
             try:
-                df_with_odds = apply_odds_to_df(
+                df_with_odds = apply_odds_and_class_to_df(
                     st.session_state["formfav_df"],
                     odds_text
                 )
-
-                st.subheader("Final Race Data")
-                st.dataframe(df_with_odds, use_container_width=True)
 
                 scored_df = calculate_scores(df_with_odds)
 
@@ -819,17 +943,21 @@ with tab1:
 with tab2:
     st.subheader("Manual CSV Scorer")
 
-    example_csv = """horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating
-13,Zavega,6,BM58,1,Ben Looker,Alyssa and Troy Sweeney,3.50,1,3,1,800m-1000m,57,Soft 7,Fine,100
-3,Irish Jig,6,BM58,8,Mikayla Weir,Scott Singleton,3.20,1,6,4,1200m-1280m,62,Soft 7,Fine,93
-12,Dubalene,6,BM58,5,Luke Rolls,Colt Prosser,8.50,1,2,3,800m-1400m,57.5,Soft 7,Fine,80
+    example_csv = """horse_number,horse_name,race_number,grade,barrier,jockey,trainer,odds,last_start_position,second_last_position,third_last_position,distance_range,weight_carried,track_condition,weather,sky_rating,class_movement
+13,Zavega,6,BM58,1,Ben Looker,Alyssa and Troy Sweeney,3.50,1,3,1,800m-1000m,57,Soft 7,Fine,100,W
+3,Irish Jig,6,BM58,8,Mikayla Weir,Scott Singleton,3.20,1,6,4,1200m-1280m,62,Soft 7,Fine,93,E
+12,Dubalene,6,BM58,5,Luke Rolls,Colt Prosser,8.50,1,2,3,800m-1400m,57.5,Soft 7,Fine,80,S
 """
 
     manual_date = st.date_input("Manual race date", value=date.today())
     manual_track = st.text_input("Manual track", value="Manual Track")
     manual_race = st.number_input("Manual race number", min_value=1, max_value=20, value=1)
 
-    horse_csv = st.text_area("Paste horse CSV here", value=example_csv, height=300)
+    horse_csv = st.text_area(
+        "Paste horse CSV here",
+        value=example_csv,
+        height=300
+    )
 
     if st.button("Score Manual CSV"):
         try:
