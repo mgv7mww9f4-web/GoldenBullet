@@ -30,6 +30,7 @@ st.success(f"Odds API Connected: {API_KEY[:6]}...")
 st.write(
     "Upload meeting screenshots, build race lists, "
     "paste horse CSVs, score races, and prepare for live Odds API integration."
+)
 
 st.title("🏇 Golden Bullet")
 st.write("Upload meeting screenshots, build race lists, paste horse CSVs, and score races.")
