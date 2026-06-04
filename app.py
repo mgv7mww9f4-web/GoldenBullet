@@ -1,4 +1,6 @@
 from io import StringIO
+from datetime import date
+
 import pandas as pd
 import requests
 import streamlit as st
@@ -18,9 +20,7 @@ try:
     st.success(f"FormFav API Connected: {FORMFAV_API_KEY[:6]}...")
 except Exception:
     FORMFAV_API_KEY = None
-    st.error("FormFav API key not found. Add FORMFAV_API_KEY to Streamlit Secrets.")
-
-st.write("Use FormFav to test live racing data, or paste CSV manually.")
+    st.error("FormFav API key not found in Streamlit Secrets.")
 
 
 def safe_float(value):
@@ -33,7 +33,7 @@ def safe_float(value):
 
 def safe_int(value):
     value = str(value).strip().lower()
-    if value in ["", "x", "-", "nan"]:
+    if value in ["", "x", "-", "nan", "none"]:
         return 0
     try:
         return int(float(value))
@@ -108,14 +108,14 @@ def get_form_score(last_start, second_last, third_last):
     return min(score, 35)
 
 
-def get_weight_score(weight_carried):
-    if weight_carried <= 0:
+def get_weight_score(weight):
+    if weight <= 0:
         return 0
-    elif weight_carried <= 55:
+    elif weight <= 55:
         return 10
-    elif weight_carried <= 57:
+    elif weight <= 57:
         return 8
-    elif weight_carried <= 59:
+    elif weight <= 59:
         return 5
     else:
         return 2
@@ -138,44 +138,44 @@ def get_market_score(odds):
         return 0
 
 
-def get_sky_rating_score(sky_rating):
-    if sky_rating >= 95:
+def get_sky_rating_score(rating):
+    if rating >= 95:
         return 15
-    elif sky_rating >= 90:
+    elif rating >= 90:
         return 12
-    elif sky_rating >= 85:
+    elif rating >= 85:
         return 10
-    elif sky_rating >= 80:
+    elif rating >= 80:
         return 7
-    elif sky_rating >= 70:
+    elif rating >= 70:
         return 4
     else:
         return 0
 
 
-def get_distance_score(distance_range):
-    distance_range = str(distance_range).lower()
+def get_distance_score(distance):
+    distance = str(distance).lower()
 
-    if "1400" in distance_range:
+    if "1400" in distance:
         return 10
-    elif "1300" in distance_range:
+    elif "1300" in distance:
         return 8
-    elif "1200" in distance_range:
+    elif "1200" in distance:
         return 6
-    elif "1000" in distance_range or "1100" in distance_range:
+    elif "1000" in distance or "1100" in distance:
         return 5
     else:
         return 4
 
 
-def get_track_score(track_condition):
-    track_condition = str(track_condition).lower()
+def get_track_score(track):
+    track = str(track).lower()
 
-    if "soft" in track_condition:
+    if "soft" in track:
         return 8
-    elif "good" in track_condition:
+    elif "good" in track:
         return 6
-    elif "heavy" in track_condition:
+    elif "heavy" in track:
         return 5
     else:
         return 4
@@ -257,11 +257,13 @@ def get_stake(score, bankroll):
 
 
 def display_scored_race(scored_df, bankroll):
-    st.success("Race scored successfully!")
+    if scored_df.empty:
+        st.warning("No runners found.")
+        return
 
     best = scored_df.sort_values("score", ascending=False).iloc[0]
 
-    st.subheader("Golden Bullet")
+    st.subheader("🏆 Golden Bullet")
 
     st.success(
         f"#{best['horse_number']} {best['horse_name']} | "
@@ -324,100 +326,233 @@ def display_scored_race(scored_df, bankroll):
         st.write("No Roughie Chance found.")
 
 
-def call_formfav(endpoint):
-    base_url = "https://api.formfav.com"
-
-    url = base_url + endpoint
+def call_formfav_form(race_date, track, race):
+    url = "https://api.formfav.com/v1/form"
 
     headers = {
-        "Authorization": f"Bearer {FORMFAV_API_KEY}",
         "X-API-Key": FORMFAV_API_KEY,
         "Accept": "application/json"
+    }
+
+    params = {
+        "date": race_date,
+        "track": track,
+        "race": race
     }
 
     response = requests.get(
         url,
         headers=headers,
+        params=params,
         timeout=30
     )
 
     return response
 
 
-def flatten_json_to_table(data):
-    if isinstance(data, list):
-        return pd.json_normalize(data)
+def normalise_formfav_to_csv(data, race_number, track_condition):
+    runners = []
 
     if isinstance(data, dict):
-        for key in ["data", "meetings", "races", "results"]:
-            if key in data and isinstance(data[key], list):
-                return pd.json_normalize(data[key])
+        if "data" in data and isinstance(data["data"], list):
+            runners = data["data"]
+        elif "runners" in data and isinstance(data["runners"], list):
+            runners = data["runners"]
+        elif "horses" in data and isinstance(data["horses"], list):
+            runners = data["horses"]
+        elif "race" in data and isinstance(data["race"], dict):
+            race_data = data["race"]
+            if "runners" in race_data:
+                runners = race_data["runners"]
+        else:
+            runners = [data]
 
-        return pd.json_normalize(data)
+    elif isinstance(data, list):
+        runners = data
 
-    return pd.DataFrame()
+    rows = []
 
+    for index, runner in enumerate(runners, start=1):
+        horse_number = (
+            runner.get("number")
+            or runner.get("horse_number")
+            or runner.get("runner_number")
+            or index
+        )
+
+        horse_name = (
+            runner.get("horse")
+            or runner.get("horse_name")
+            or runner.get("name")
+            or runner.get("runner_name")
+            or "Unknown"
+        )
+
+        odds = (
+            runner.get("odds")
+            or runner.get("price")
+            or runner.get("fixed_odds")
+            or runner.get("win_odds")
+            or 0
+        )
+
+        barrier = (
+            runner.get("barrier")
+            or runner.get("barrier_number")
+            or runner.get("gate")
+            or 0
+        )
+
+        jockey = (
+            runner.get("jockey")
+            or runner.get("jockey_name")
+            or "Unknown"
+        )
+
+        trainer = (
+            runner.get("trainer")
+            or runner.get("trainer_name")
+            or "Unknown"
+        )
+
+        weight = (
+            runner.get("weight")
+            or runner.get("weight_carried")
+            or runner.get("allocated_weight")
+            or 0
+        )
+
+        rating = (
+            runner.get("rating")
+            or runner.get("form_rating")
+            or runner.get("score")
+            or runner.get("prediction_score")
+            or 0
+        )
+
+        distance = (
+            runner.get("distance")
+            or runner.get("distance_range")
+            or "Unknown"
+        )
+
+        grade = (
+            runner.get("grade")
+            or runner.get("class")
+            or runner.get("race_class")
+            or "API"
+        )
+
+        form = str(
+            runner.get("form")
+            or runner.get("last_10")
+            or runner.get("recent_form")
+            or ""
+        )
+
+        form_digits = [int(char) for char in form if char.isdigit()]
+
+        if len(form_digits) >= 3:
+            last_start = form_digits[-1]
+            second_last = form_digits[-2]
+            third_last = form_digits[-3]
+        elif len(form_digits) == 2:
+            last_start = form_digits[-1]
+            second_last = form_digits[-2]
+            third_last = 0
+        elif len(form_digits) == 1:
+            last_start = form_digits[-1]
+            second_last = 0
+            third_last = 0
+        else:
+            last_start = 0
+            second_last = 0
+            third_last = 0
+
+        rows.append({
+            "horse_number": horse_number,
+            "horse_name": horse_name,
+            "race_number": race_number,
+            "grade": grade,
+            "barrier": barrier,
+            "jockey": jockey,
+            "trainer": trainer,
+            "odds": odds,
+            "last_start_position": last_start,
+            "second_last_position": second_last,
+            "third_last_position": third_last,
+            "distance_range": distance,
+            "weight_carried": weight,
+            "track_condition": track_condition,
+            "weather": "Unknown",
+            "sky_rating": rating
+        })
+
+    return pd.DataFrame(rows)
+
+
+st.write("Use FormFav to load race form, or paste CSV manually.")
 
 bankroll = st.number_input("Bankroll", min_value=1.0, value=150.0, step=1.0)
 
-tab1, tab2 = st.tabs(["FormFav API Test", "Manual CSV Scorer"])
+tab1, tab2 = st.tabs(["FormFav Race Loader", "Manual CSV Scorer"])
 
 with tab1:
-    st.subheader("FormFav API Test")
-
-    st.write(
-        "FormFav says it offers meetings, race form, predictions, jockey/trainer data, "
-        "track bias and racing form through a REST API. This test checks which endpoint responds."
-    )
+    st.subheader("FormFav Race Loader")
 
     if FORMFAV_API_KEY is None:
         st.error("Add FORMFAV_API_KEY to Streamlit Secrets first.")
     else:
-        endpoint = st.text_input(
-            "Endpoint to test",
-            value="/v1/meetings"
-        )
+        race_date = st.date_input("Race date", value=date.today())
+        track = st.text_input("Track", value="Sandown")
+        race = st.number_input("Race number", min_value=1, max_value=20, value=1)
+        track_condition = st.text_input("Track condition", value="Unknown")
 
-        st.write("Try these one at a time if the first does not work:")
-        st.code(
-            """/v1/meetings
-/v1/races
-/v1/race-form
-/v1/predictions
-/api/v1/meetings
-/api/v1/races
-/api/v1/race-form
-/api/v1/predictions"""
-        )
-
-        if st.button("Test FormFav Endpoint"):
+        if st.button("Load FormFav Race"):
             try:
-                response = call_formfav(endpoint)
+                response = call_formfav_form(
+                    race_date=str(race_date),
+                    track=track,
+                    race=int(race)
+                )
 
                 st.write("Status code:", response.status_code)
-                st.write("Final URL:", response.url)
+                st.write("URL:", response.url)
 
-                try:
-                    data = response.json()
-                    st.session_state["formfav_response"] = data
+                data = response.json()
+
+                if response.status_code != 200:
+                    st.error("FormFav returned an error.")
+                    st.json(data)
+                else:
+                    st.success("FormFav race loaded.")
 
                     st.subheader("Raw JSON")
                     st.json(data)
 
-                    st.subheader("Table View")
-                    table = flatten_json_to_table(data)
+                    df = normalise_formfav_to_csv(
+                        data=data,
+                        race_number=int(race),
+                        track_condition=track_condition
+                    )
 
-                    if len(table) > 0:
-                        st.dataframe(table, use_container_width=True)
-                    else:
-                        st.warning("No table could be created from this response.")
+                    st.subheader("Generated Golden Bullet CSV")
 
-                except Exception:
-                    st.subheader("Raw Text")
-                    st.text(response.text)
+                    csv_text = df.to_csv(index=False)
+
+                    edited_csv = st.text_area(
+                        "Check/edit before scoring",
+                        value=csv_text,
+                        height=300
+                    )
+
+                    if st.button("Score FormFav Race"):
+                        edited_df = pd.read_csv(StringIO(edited_csv))
+                        scored_df = calculate_scores(edited_df)
+                        display_scored_race(scored_df, bankroll)
 
             except Exception as error:
-                st.error("Could not call FormFav.")
+                st.error("Could not load FormFav race.")
                 st.write(error)
 
 
